@@ -134,7 +134,8 @@ impl Router {
                 current = next.as_ref();
             } else if let Some(pc) = &current.param_child {
                 trace!("Extracting param: {} = '{}'", pc.name, part);
-                request.params.insert(pc.name.as_ref(), part);
+                request.params.push((pc.name.as_ref(), part));
+                // request.params.insert(pc.name.as_ref(), part);
                 current = pc.node.as_ref();
             } else {
                 return None;
