@@ -24,3 +24,8 @@ target
 # Added by cargo
 
 /target
+
+cert.pem
+key.pem
+
+.DS_Store
