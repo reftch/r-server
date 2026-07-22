@@ -13,6 +13,13 @@ categories = ["network-programming"]
 [dependencies]
 
 [profile.release]
+strip = true
+opt-level = "z"
 lto = true
 codegen-units = 1
-opt-level = 3
+panic = "abort"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
