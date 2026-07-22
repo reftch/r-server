@@ -1,0 +1,15 @@
+[package]
+name = "r-server"
+version = "0.1.0"
+edition = "2024"
+description = "Reactive Http Server"
+license = "Apache-2.0"
+keywords = ["http", "server", "reactive"]
+categories = ["network-programming"]
+
+[dependencies]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
