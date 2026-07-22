@@ -128,4 +128,4 @@ impl<'a> Request<'a> {
 }
 
 #[cfg(test)]
-mod test;
+mod tests;
