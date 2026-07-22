@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "Reactive Http Server"
 license = "Apache-2.0"
+readme = "README.md"
+homepage = "https://github.com/reftch/r-server"
+repository = "https://github.com/reftch/r-server"
 keywords = ["http", "server", "reactive"]
 categories = ["network-programming"]
 
