@@ -65,12 +65,21 @@ impl<'a> Request<'a> {
             return None;
         }
 
-        // ------------------------
-        // Query parameters
-        // ------------------------
+        let (path, query_params) = Self::parse_path_and_query(full_path);
+        let headers = Self::parse_headers(&mut lines);
 
+        Some(Self {
+            method,
+            path,
+            headers,
+            params: Vec::with_capacity(4),
+            query_params,
+        })
+    }
+
+    #[inline(always)]
+    fn parse_path_and_query(full_path: &str) -> (&str, Vec<(&str, &str)>) {
         let mut query_params = Vec::with_capacity(4);
-
         let path = match full_path.find('?') {
             Some(pos) => {
                 let path = &full_path[..pos];
@@ -85,11 +94,11 @@ impl<'a> Request<'a> {
             }
             None => full_path,
         };
+        (path, query_params)
+    }
 
-        // ------------------------
-        // Headers
-        // ------------------------
-
+    #[inline(always)]
+    fn parse_headers<'b>(lines: &mut std::str::Split<'b, &str>) -> Vec<(&'b str, &'b str)> {
         let mut headers = Vec::with_capacity(12);
 
         for line in lines {
@@ -101,14 +110,7 @@ impl<'a> Request<'a> {
                 headers.push((key.trim(), value.trim()));
             }
         }
-
-        Some(Self {
-            method,
-            path,
-            headers,
-            params: Vec::with_capacity(4),
-            query_params,
-        })
+        headers
     }
 
     #[inline(always)]

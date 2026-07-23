@@ -7,7 +7,7 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 - **Asynchronous Engine**: Uses non-blocking I/O for efficient concurrent connection handling.
 - **High-Performance Routing**: Trie-based router with support for dynamic path parameters (e.g., `/users/:id`).
 - **Static File Serving**: Built-in support for serving assets from a designated directory with automatic MIME type detection.
-- **Modular Architecture**: Separated into specialized crates for requests, responses, routing, and server logic.
+- **Modular Architecture**: Separated into specialized modules for requests, responses, routing, and server logic.
 
 ## Project Structure
 
@@ -166,30 +166,14 @@ To build the project, ensure you have Rust and Cargo installed, then run:
 cargo build
 ```
 
-## Developer Guide
+## How to run example with Docker
 
-This project uses [mise](https://mise.jdx.dev/) for task orchestration. You can use `mise run <task-name>` to execute the following commands:
+Run application
+```
+docker compose -f examples/docker/compose.yml up -d --build
+```
 
-### Application Tasks
-
-| Task | Description | Command |
-|------|-------------|---------|
-| `app` | Build and run application | `cargo run` |
-| `dev` | Run in development mode with hot reloading | `watch app` (triggers `mise w`) |
-| `test` | Run all tests in the workspace | `cargo test --workspace` |
-| `clean` | Clean build artifacts | `cargo clean` |
-
-### Production & Docker Tasks
-
-| Task | Description | Command |
-|------|-------------|---------|
-| `prod-up` | Bring up production environment (Docker) | `docker compose up -d --build` |
-| `prod-down`| Take down production environment | `docker compose down` |
-
-## Getting Started
-
-To build the project, ensure you have Rust and Cargo installed, then run:
-
-```bash
-cargo build
+Stop application
+```
+docker compose -f docker/compose.yml down  
 ```
