@@ -252,16 +252,17 @@ impl Server {
         self.assets_path = PathBuf::from(path);
     }
 
-    pub fn add_route(
+    pub fn route(
         &mut self,
         method: crate::router::Method,
         path: &str,
         handler: crate::router::HandlerFn,
-    ) {
+    ) -> &mut Self {
         if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
             trace!("Successfully added route: {} {}", method.index(), path);
             router.add_route(method, path, handler);
         }
+        self
     }
 
     pub fn run(&mut self) -> io::Result<()> {
@@ -411,3 +412,6 @@ impl Server {
         }
     }
 }
+
+// #[cfg(test)]
+// mod tests;

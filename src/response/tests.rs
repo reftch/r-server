@@ -33,11 +33,11 @@ mod tests {
     #[test]
     fn test_response_add_header() {
         let mut response = Response::new(Status::Ok, "OK", ContentType::TEXT);
-        response.set_header("X-Test".to_string(), "Value".to_string());
+        response.header("X-Test".to_string(), "Value".to_string());
         assert_eq!(response.headers.get("X-Test").unwrap(), "Value");
 
         // Ensure duplicate headers are not added (as per implementation)
-        response.set_header("X-Test".to_string(), "New Value".to_string());
+        response.header("X-Test".to_string(), "New Value".to_string());
         assert_eq!(response.headers.get("X-Test").unwrap(), "Value");
     }
 
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn test_response_to_bytes_with_headers() {
         let mut response = Response::new(Status::Ok, "OK", ContentType::TEXT);
-        response.set_header("Custom-Header".to_string(), "Custom-Value".to_string());
+        response.header("Custom-Header".to_string(), "Custom-Value".to_string());
         let bytes = response.to_bytes();
         let bytes_str = String::from_utf8(bytes).unwrap();
         assert!(bytes_str.contains("Custom-Header: Custom-Value\r\n"));

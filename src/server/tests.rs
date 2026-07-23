@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::Server;
-    use request::Request;
-    use response::Response;
-    use router::{Method, Router};
+    use crate::request::Request;
+    use crate::response::Response;
+    use crate::router::{Method, Router};
+    use crate::server::Server;
+
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::sync::Arc;

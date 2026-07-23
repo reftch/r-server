@@ -235,26 +235,26 @@ impl Response {
         response_bytes
     }
 
-    pub fn set_header(&mut self, key: String, value: String) -> &mut Self {
+    pub fn header(&mut self, key: String, value: String) -> &mut Self {
         self.headers.entry(key).or_insert(value);
         self
     }
 
-    pub fn set_status(&mut self, status: Status) -> &mut Self {
+    pub fn status(&mut self, status: Status) -> &mut Self {
         self.status = status;
         self
     }
 
-    pub fn set_body(&mut self, body: impl Into<Vec<u8>>) -> &mut Self {
+    pub fn body(&mut self, body: impl Into<Vec<u8>>) -> &mut Self {
         self.body = body.into();
         self
     }
 
-    pub fn set_content_type(&mut self, content_type: ContentType) -> &mut Self {
+    pub fn content_type(&mut self, content_type: ContentType) -> &mut Self {
         self.content_type = content_type;
         self
     }
 }
 
 #[cfg(test)]
-mod test;
+mod tests;
