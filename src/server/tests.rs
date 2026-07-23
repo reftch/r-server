@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::logger;
+    use crate::logger::LogLevel;
     use crate::request::Request;
     use crate::response::Response;
     use crate::router::{Method, Router};
@@ -7,24 +9,22 @@ mod tests {
 
     use std::io::{Read, Write};
     use std::net::TcpStream;
-    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
     fn hello_handler(_req: &Request, res: &mut Response) {
-        res.body = "Hello, World!".to_string();
+        res.body("Hello, World!");
     }
 
     #[test]
-    fn test_server_connection() {
-        let mut router = Router::new();
-        router.add_route(Method::GET, "/", hello_handler);
-        let router = Arc::new(router);
+    fn test_server_connection() -> Result<(), Box<dyn std::error::Error>> {
+        logger::set_level(LogLevel::None);
 
         // Use port 0 to let the OS assign a free port
-        let mut server = Server::new("127.0.0.1:0", router.clone()).unwrap();
-        let addr = server.listener.local_addr().unwrap();
+        let mut server = Server::new("127.0.0.1:0")?;
+        server.route(Method::GET, "/", hello_handler);
 
+        let addr = server.listener.local_addr().unwrap();
         thread::spawn(move || {
             if let Err(e) = server.run() {
                 eprintln!("Server error: {}", e);
@@ -66,15 +66,18 @@ mod tests {
         assert!(response_str.contains("HTTP/1.1"));
         assert!(response_str.contains("200 OK"));
         assert!(response_str.contains("Hello, World!"));
+
+        Ok(())
     }
 
     #[test]
     fn test_server_404() {
+        logger::set_level(LogLevel::None);
+
         let mut router = Router::new();
         router.add_route(Method::GET, "/", hello_handler);
-        let router = Arc::new(router);
 
-        let mut server = Server::new("127.0.0.1:0", router.clone()).unwrap();
+        let mut server = Server::new("127.0.0.1:0").unwrap();
         let addr = server.listener.local_addr().unwrap();
 
         thread::spawn(move || {

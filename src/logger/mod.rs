@@ -14,6 +14,7 @@ pub enum LogLevel {
     Info = 2,
     Warn = 3,
     Error = 4,
+    None = 5,
 }
 
 impl LogLevel {
@@ -24,6 +25,7 @@ impl LogLevel {
             LogLevel::Info => "INFO",
             LogLevel::Warn => "WARN",
             LogLevel::Error => "ERROR",
+            LogLevel::None => "None",
         }
     }
 }
@@ -63,6 +65,7 @@ fn get_current_threshold() -> LogLevel {
         2 => LogLevel::Info,
         3 => LogLevel::Warn,
         4 => LogLevel::Error,
+        5 => LogLevel::None,
         _ => LogLevel::Info,
     }
 }
@@ -228,7 +231,6 @@ macro_rules! error {
         $crate::logger::print_log($crate::logger::LogLevel::Error, module_path!(), format_args!($($arg)+));
     };
 }
-
 
 #[cfg(test)]
 mod tests;
