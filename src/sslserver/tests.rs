@@ -7,6 +7,7 @@ mod tests {
     use std::fs::{self, File};
     use std::io::Write;
     use tempfile::tempdir;
+    use crate::response::ContentType;
 
     #[test]
     fn test_get_content_type() {
@@ -97,13 +98,13 @@ mod tests {
 
     #[test]
     fn test_would_block() {
-        let error = io::Error::new(io::ErrorKind::WouldBlock, "would block");
+        let error = std::io::Error::new(std::io::ErrorKind::WouldBlock, "would block");
         assert!(Server::would_block(&error));
 
-        let interrupt = io::Error::new(io::ErrorKind::Interrupted, "interrupted");
+        let interrupt = std::io::Error::new(std::io::ErrorKind::Interrupted, "interrupted");
         assert!(Server::would_block(&interrupt));
 
-        let real_error = io::Error::new(io::ErrorKind::ConnectionReset, "reset");
+        let real_error = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
         assert!(!Server::would_block(&real_error));
     }
 }

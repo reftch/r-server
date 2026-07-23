@@ -1,4 +1,4 @@
-pub use self::logger::{print_log, LogLevel, set_level, format_timestamp, get_timestamp};
+pub use self::logger::{LogLevel, format_timestamp, get_timestamp, print_log, set_level};
 pub mod logger;
 
 #[cfg(test)]
