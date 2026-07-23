@@ -1,6 +1,6 @@
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries
-FROM rust:1.96.1-alpine as builder
+FROM rust:1.96.1-alpine AS builder
 
 ARG ARTIFACT=rest
 ARG TARGETARCH=aarch64
@@ -23,16 +23,16 @@ RUN cargo build --release --example $ARTIFACT --target $TARGETARCH-unknown-linux
     cp target/$TARGETARCH-unknown-linux-musl/release/examples/$ARTIFACT /application
 
 # Create cerificates
-RUN openssl req -x509 -noenc -keyout key.pem -out cert.pem -subj /CN=0.0.0.0
+# RUN openssl req -x509 -noenc -keyout key.pem -out cert.pem -subj /CN=0.0.0.0
 
 # Stage 2: Use scratch for the smallest possible image
 # Scratch is an empty image - just the binary and nothing else
 FROM scratch
 
 # Copy SSL certificates for HTTPS support
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app/cert.pem /cert.pem
-COPY --from=builder /app/key.pem /key.pem
+# COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# COPY --from=builder /app/cert.pem /cert.pem
+# COPY --from=builder /app/key.pem /key.pem
 
 # Copy the statically linked binary
 COPY --from=builder /application /application
