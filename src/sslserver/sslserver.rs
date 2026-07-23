@@ -105,7 +105,6 @@ impl Server {
     }
 
     pub fn would_block(err: &io::Error) -> bool {
-
         matches!(
             err.kind(),
             io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
@@ -225,7 +224,6 @@ impl Server {
     }
 
     pub fn handle_static(path: &str, assets_path: &Path) -> Option<Response> {
-
         let requested_path = Path::new(path);
 
         // Prevent directory traversal attacks (e.g., "/../etc/passwd")
@@ -275,7 +273,6 @@ impl Server {
     }
 
     pub fn get_content_type(path: &Path) -> ContentType {
-
         match path.extension().and_then(|s| s.to_str()) {
             Some("html") => ContentType::HTML,
             Some("css") => ContentType::CSS,
@@ -504,7 +501,6 @@ impl Server {
     }
 
     fn continue_handshake(conn: &mut Connection) -> io::Result<bool> {
-
         let state = conn.tls.take().unwrap();
 
         match state {

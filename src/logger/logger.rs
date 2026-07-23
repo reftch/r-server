@@ -1,11 +1,9 @@
 use std::fmt::Arguments;
 use std::io::{self, Write};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{Sender, channel};
+use std::sync::atomic::{AtomicU8, Ordering}; // Added for global state
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// --- LOG LEVELS ---
+// Define Log Levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum LogLevel {
@@ -30,35 +28,18 @@ impl LogLevel {
     }
 }
 
-// --- INTERNAL DATA STRUCTURE ---
-struct LogEntry {
-    level: LogLevel,
-    module: String,
-    content: String,
-    timestamp: String,
-}
-
-// --- GLOBAL STATE ---
+// --- GLOBAL LOGGING STATE ---
+// We use AtomicU8 to store the current threshold so we can change it at runtime.
 static GLOBAL_LOG_LEVEL: AtomicU8 = AtomicU8::new(LogLevel::Info as u8);
 
-/// This is the "Magic" part.
-/// It holds our sender and initializes the background thread on its first use.
-static LOG_SENDER: OnceLock<Sender<LogEntry>> = OnceLock::new();
-
-/// Sets the global log level threshold. Only messages with a level
-/// equal to or higher than this will be logged.
-///
-/// # Examples
-///
-/// ```rust
-/// use r_server::logger::{set_level, LogLevel};
-/// set_level(LogLevel::Warn);
-/// ```
+/// Sets the global minimum log level.
+/// Only logs with this level or higher will be printed.
 pub fn set_level(level: LogLevel) {
     GLOBAL_LOG_LEVEL.store(level as u8, Ordering::SeqCst);
 }
 
 fn get_current_threshold() -> LogLevel {
+    // Convert the stored u8 back into a LogLevel enum
     match GLOBAL_LOG_LEVEL.load(Ordering::SeqCst) {
         0 => LogLevel::Trace,
         1 => LogLevel::Debug,
@@ -66,47 +47,11 @@ fn get_current_threshold() -> LogLevel {
         3 => LogLevel::Warn,
         4 => LogLevel::Error,
         5 => LogLevel::None,
-        _ => LogLevel::Info,
+        _ => LogLevel::Info, // Fallback
     }
 }
+// -----------------------------
 
-/// This function handles the background thread lifecycle.
-/// It's called automatically by print_log via the OnceLock.
-fn get_sender() -> &'static Sender<LogEntry> {
-    LOG_SENDER.get_or_init(|| {
-        let (tx, rx) = channel::<LogEntry>();
-
-        // Spawn the background worker thread
-        std::thread::spawn(move || {
-            let stdout = io::stdout();
-            let mut handle = stdout.lock();
-            for entry in rx {
-                let _ = writeln!(
-                    handle,
-                    "[{}] [{}] [{}] - {}",
-                    entry.timestamp,
-                    entry.level.as_str(),
-                    entry.module,
-                    entry.content
-                );
-                // Flush ensures the message appears in the terminal immediately
-                let _ = handle.flush();
-            }
-        });
-
-        tx
-    })
-}
-
-/// Formats a duration into a timestamp string: YYYY-MM-DD HH:MM:SS.mmm
-///
-/// # Examples
-///
-/// ```rust
-/// use r_server::logger::format_timestamp;
-/// let ts = format_timestamp(0, 500);
-/// assert_eq!(ts, "1970-01-01 00:00:00.500");
-/// ```
 pub fn format_timestamp(total_seconds: u64, millis: u64) -> String {
     let sec = total_seconds % 60;
     let min = (total_seconds / 60) % 60;
@@ -168,35 +113,26 @@ pub fn get_timestamp() -> String {
     format_timestamp(now.as_secs(), now.as_millis() as u64 % 1000)
 }
 
-/// Prints a log message to stdout via the background thread.
-///
-/// # Examples
-///
-/// ```rust
-/// use r_server::logger::{print_log, LogLevel};
-/// print_log(LogLevel::Info, "test_module", format_args!("Hello, world!"));
-/// ```
 pub fn print_log(level: LogLevel, module: &str, args: Arguments<'_>) {
+    // IMPORTANT: Check the level FIRST before doing any work (like get_timestamp)
     if level < get_current_threshold() {
         return;
     }
 
     let now = get_timestamp();
-    let content = format!("{}", args); // Format here so it's thread-safe
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
 
-    let entry = LogEntry {
-        level,
-        module: module.to_string(),
-        content,
-        timestamp: now,
-    };
-
-    // We fetch the sender (which initializes the thread on the first call)
-    // and send the message immediately without blocking main execution.
-    get_sender().send(entry).ok();
+    let _ = writeln!(
+        handle,
+        "[{}] [{}] [{}] - {}",
+        now,
+        level.as_str(),
+        module,
+        args
+    );
 }
 
-// --- MACROS ---
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)+) => {
