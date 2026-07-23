@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
-use crate::router::{self, Router};
+use crate::router::Router;
 
 use std::sync::Arc;
 
@@ -294,16 +294,23 @@ impl Server {
         }
     }
 
-    pub fn set_assets_path(&mut self, path: &str) {
+    pub fn assets_path(&mut self, path: &str) {
         self.assets_path = PathBuf::from(path);
     }
 
-    pub fn add_route(&mut self, method: router::Method, path: &str, handler: router::HandlerFn) {
+    pub fn route(
+        &mut self,
+        method: crate::router::Method,
+        path: &str,
+        handler: crate::router::HandlerFn,
+    ) -> &mut Self {
         if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
             trace!("Successfully added route: {} {}", method.index(), path);
             router.add_route(method, path, handler);
         }
+        self
     }
+
     pub fn run(&mut self) -> io::Result<()> {
         self.listener.set_nonblocking(true)?;
 

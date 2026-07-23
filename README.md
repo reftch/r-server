@@ -42,38 +42,17 @@ Provides shared utility functions such as environment variable parsing with defa
 Here is a comprehensive example demonstrating how to initialize the server, configure static assets, add dynamic routes, and construct responses:
 
 ```rust
-use response::{Status, ContentType};
-use router::Method;
-use server::Server;
-use utils::get_env;
+use r_server::{response, router::Method, server::Server};
 
 fn main() -> std::io::Result<()> {
-    // 1. Setup configuration from environment variables
-    let addr = format!("{}:{}", get_env("HOST", "0.0.0.0".to_string()), get_env("PORT", 8080));
-
-    // 2. Initialize the server
-    let mut server = Server::new(&addr)?;
-
-    // 3. Configure the static assets directory (fallback if no route matches)
-    server.set_assets_path("./assets");
-
-    // 4. Add a dynamic route with path parameters
-    server.add_route(Method::GET, "/api/v1/inc/:id", |req, res| {
-        if let Some(id) = req.params.get("id") {
-            if let Ok(val) = id.parse::<i32>() {
-                // 5. Construct a successful response
-                res.set_status(Status::Ok)
-                    .set_content_type(ContentType::JSON)
-                    .set_body(format!("{{\"value\":{}}}", val + 1));
-            } else {
-                res.set_status(Status::BadRequest)
-                    .set_body("Invalid ID - must be an integer".to_string());
+    Server::new("0.0.0.0:8080")?
+        .route(Method::GET, "/api/v1/inc/:id", |req, res| {
+            if let Some(id) = req.param("id") {
+                res.content_type(response::ContentType::JSON)
+                    .body(format!("{{\"value\":{}}}", id));
             }
-        }
-    });
-
-    // 6. Start the server loop
-    server.run()?;
+        })
+        .run()?;
 
     Ok(())
 }
@@ -90,32 +69,17 @@ openssl req -x509 -noenc -keyout key.pem -out cert.pem -subj /CN=0.0.0.0
 The usage pattern is nearly identical, but you use the `sslserver::Server` instead of `server::Server`:
 
 ```rust
-use response::{Status, ContentType};
-use router::Method;
-use sslserver::Server;
-use utils::get_env;
+use r_server::{response, router::Method, sslserver::Server};
 
 fn main() -> std::io::Result<()> {
-    // Use a different default port for HTTPS (e.g., 8443)
-    let addr = format!("{}:{}", get_env("HOST", "0.0.0.0".to_string()), get_env("PORT", 8443));
-
-    let mut server = Server::new(&addr)?;
-    server.set_assets_path("./assets");
-
-    server.add_route(Method::GET, "/api/v1/inc/:id", |req, res| {
-        if let Some(id) = req.params.get("id") {
-            if let Ok(val) = id.parse::<i32>() {
-                res.set_status(Status::Ok)
-                    .set_content_type(ContentType::JSON)
-                    .set_body(format!("{{\"value\":{}}}", val + 1));
-            } else {
-                res.set_status(Status::BadRequest)
-                    .set_body("Invalid ID - must be an integer".to_string());
+    Server::new("0.0.0.0:8443")?
+        .route(Method::GET, "/api/v1/inc/:id", |req, res| {
+            if let Some(id) = req.param("id") {
+                res.content_type(response::ContentType::JSON)
+                    .body(format!("{{\"value\":{}}}", id));
             }
-        }
-    });
-
-    server.run()?;
+        })
+        .run()?;
 
     Ok(())
 }
@@ -124,7 +88,7 @@ fn main() -> std::io::Result<()> {
 To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore self-signed certificate warnings):
 
 ```bash
-curl -k https://localhost:8443/api/v1/inc/42
+curl -k https://localhost:8443/api/v1/inc/100
 ```
 
 
@@ -135,18 +99,18 @@ curl -k https://localhost:8443/api/v1/inc/42
 | Method | Description |
 |--------|-------------|
 | `new(addr: &str) -> IoResult<Self>` | Creates a new server instance listening on the given address. |
-| `set_assets_path(path: &str)` | Sets the directory for serving static files. |
-| `add_route(method, path, handler)` | Registers a new route with a specific HTTP method and path. |
+| `assets_path(path: &str)` | Sets the directory for serving static files. |
+| `route(method, path, handler)` | Registers a new route with a specific HTTP method and path. |
 | `run() -> IoResult<()>` | Starts the asynchronous event loop. |
 
 ### `Response` (Builder Pattern)
 
 Once you have a mutable reference to the response in a handler, you can use:
 
-- `.set_status(Status)` : Updates the HTTP status code.
-- `.set_body(impl Into<Vec<u8>>)` : Sets the response body.
-- `.set_content_type(ContentType)` : Sets the MIME type.
-- `.set_header(key, value)` : Adds a custom header.
+- `.status(Status)` : Updates the HTTP status code.
+- `.body(impl Into<Vec<u8>>)` : Sets the response body.
+- `.content_type(ContentType)` : Sets the MIME type.
+- `.header(key, value)` : Adds a custom header.
 
 ### `Request`
 
