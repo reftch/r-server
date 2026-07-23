@@ -6,6 +6,6 @@ services:
       dockerfile: ./examples/docker/Dockerfile
     restart: unless-stopped
     environment:
-      - PORT=8080
+      - PORT=8443
     ports:
-      - 8080:8080
+      - 8443:8443
