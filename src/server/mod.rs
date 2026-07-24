@@ -157,7 +157,7 @@ impl Server {
             };
 
             // Prepare the response for writing and clear the read buffer to prepare for next cycle.
-            conn.write_buf = response.to_bytes();
+            conn.write_buf = response.build();
             conn.read_buf.clear();
             trace!(
                 "Response prepared; write_buf size: {} bytes",

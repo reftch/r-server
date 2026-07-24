@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
+pub mod builder;
 pub mod content_type;
 pub mod status;
+
+use crate::response::builder::ResponseBuilder;
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
@@ -24,28 +27,8 @@ impl Response {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut response = format!(
-            "HTTP/1.1 {} {}\r\n",
-            self.status.as_u16(),
-            self.status.reason_phrase()
-        );
-
-        // Add Content-Type header
-        response.push_str(&format!("Content-Type: {}\r\n", self.content_type.as_str()));
-
-        // Add Content-Length header
-        response.push_str(&format!("Content-Length: {}\r\n", self.body.len()));
-
-        // Add custom headers from the collection
-        for (key, value) in &self.headers {
-            response.push_str(&format!("{}: {}\r\n", key, value));
-        }
-
-        response.push_str("\r\n");
-        let mut response_bytes = response.into_bytes();
-        response_bytes.extend(&self.body);
-        response_bytes
+    pub fn build(self) -> Vec<u8> {
+        ResponseBuilder::new(self).build()
     }
 
     pub fn header(&mut self, key: String, value: String) -> &mut Self {

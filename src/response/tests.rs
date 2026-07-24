@@ -15,12 +15,11 @@ mod tests {
     #[test]
     fn test_response_to_bytes() {
         let response = Response::new(Status::Ok, "OK", ContentType::TEXT);
-        let bytes = response.to_bytes();
+        let bytes = response.build();
         let bytes_str = String::from_utf8(bytes).unwrap();
         assert!(bytes_str.contains("HTTP/1.1 200 OK"));
         assert!(bytes_str.contains("Content-Length: 2"));
         assert!(bytes_str.ends_with("OK"));
-        assert_eq!(response.content_type, ContentType::TEXT);
     }
 
     #[test]
@@ -58,17 +57,16 @@ mod tests {
     #[test]
     fn test_response_404() {
         let response = Response::new(Status::NotFound, "Not Found", ContentType::TEXT);
-        let bytes = response.to_bytes();
+        let bytes = response.build();
         let bytes_str = String::from_utf8(bytes).unwrap();
         assert!(bytes_str.contains("HTTP/1.1 404 Not Found"));
-        assert_eq!(response.content_type, ContentType::TEXT);
     }
 
     #[test]
     fn test_response_to_bytes_with_headers() {
         let mut response = Response::new(Status::Ok, "OK", ContentType::TEXT);
         response.header("Custom-Header".to_string(), "Custom-Value".to_string());
-        let bytes = response.to_bytes();
+        let bytes = response.build();
         let bytes_str = String::from_utf8(bytes).unwrap();
         assert!(bytes_str.contains("Custom-Header: Custom-Value\r\n"));
     }

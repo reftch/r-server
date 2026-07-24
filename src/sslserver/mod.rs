@@ -208,7 +208,7 @@ impl Server {
                 Response::new(Status::NotFound, "Not Found", ContentType::TEXT)
             };
 
-            conn.write_buf = response.to_bytes();
+            conn.write_buf = response.build();
             conn.read_buf.clear();
             trace!(
                 "Response prepared; write_buf size: {} bytes",

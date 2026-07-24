@@ -81,7 +81,7 @@ impl<'a> Request<'a> {
     }
 
     #[inline(always)]
-    fn parse_path_and_query<'b>(full_path: &'b str) -> (&'b str, Vec<(&'b str, &'b str)>) {
+    fn parse_path_and_query(full_path: &str) -> (&str, Vec<(&str, &str)>) {
         let Some(qpos) = memchr(b'?', full_path.as_bytes()) else {
             return (full_path, Vec::with_capacity(4));
         };
