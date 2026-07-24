@@ -203,7 +203,7 @@ impl Server {
         // Attempt to read the file from the filesystem
         match fs::read(&full_path) {
             Ok(content) => {
-                let content_type = Self::get_content_type(&full_path);
+                let content_type = ContentType::get_content_type(&full_path);
                 trace!(
                     "Successfully read static file: {} ({} bytes)",
                     full_path.display(),
@@ -223,28 +223,6 @@ impl Server {
                 error!("Failed to read static file {:?}: {}", full_path, err);
                 None
             }
-        }
-    }
-
-    fn get_content_type(path: &Path) -> ContentType {
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("html") => ContentType::HTML,
-            Some("css") => ContentType::CSS,
-            Some("js") => ContentType::JAVASCRIPT,
-            Some("jpg") | Some("jpeg") => ContentType::JPEG,
-            Some("png") => ContentType::PNG,
-            Some("xml") => ContentType::XML,
-            Some("json") => ContentType::JSON,
-            Some("txt") => ContentType::TEXT,
-            Some("gif") => ContentType::GIF,
-            Some("svg") => ContentType::SVG,
-            Some("pdf") => ContentType::PDF,
-            Some("mp3") => ContentType::MP3,
-            Some("mp4") => ContentType::MP4,
-            Some("webm") => ContentType::WEBM,
-            Some("woff2") => ContentType::WOFF2,
-            Some("ttf") => ContentType::TTF,
-            _ => ContentType::UNKNOWN,
         }
     }
 

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 #[derive(Debug, PartialEq)]
 pub enum ContentType {
     HTML,
@@ -44,6 +46,28 @@ impl ContentType {
             ContentType::EOT => "application/vnd.ms-fontobject",
             ContentType::SSE => "text/event-stream",
             ContentType::UNKNOWN => "application/octet-stream",
+        }
+    }
+
+    pub fn get_content_type(path: &Path) -> ContentType {
+        match path.extension().and_then(|s| s.to_str()) {
+            Some("html") => ContentType::HTML,
+            Some("css") => ContentType::CSS,
+            Some("js") => ContentType::JAVASCRIPT,
+            Some("jpg") | Some("jpeg") => ContentType::JPEG,
+            Some("png") => ContentType::PNG,
+            Some("xml") => ContentType::XML,
+            Some("json") => ContentType::JSON,
+            Some("txt") => ContentType::TEXT,
+            Some("gif") => ContentType::GIF,
+            Some("svg") => ContentType::SVG,
+            Some("pdf") => ContentType::PDF,
+            Some("mp3") => ContentType::MP3,
+            Some("mp4") => ContentType::MP4,
+            Some("webm") => ContentType::WEBM,
+            Some("woff2") => ContentType::WOFF2,
+            Some("ttf") => ContentType::TTF,
+            _ => ContentType::UNKNOWN,
         }
     }
 }
