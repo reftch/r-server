@@ -19,6 +19,7 @@ fn test_add_and_route_basic() {
     let mut req = Request {
         method: "GET",
         path: "/",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -37,6 +38,7 @@ fn test_route_with_params() {
     let mut req = Request {
         method: "GET",
         path: "/user/alice",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -76,6 +78,7 @@ fn test_different_methods() {
     let mut req_get = Request {
         method: "GET",
         path: "/path",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -86,6 +89,7 @@ fn test_different_methods() {
     let mut req_post = Request {
         method: "POST",
         path: "/path",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -115,6 +119,7 @@ fn test_route_not_found() {
     let mut req = Request {
         method: "GET",
         path: "/wrong-path",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -130,6 +135,7 @@ fn test_route_wrong_method() {
     let mut req = Request {
         method: "POST",
         path: "/path",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -148,6 +154,7 @@ fn test_nested_routes() {
     let mut req = Request {
         method: "GET",
         path: "/api/v1/user/bob",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -168,6 +175,7 @@ fn test_param_with_multiple_parts() {
     let mut req = Request {
         method: "GET",
         path: "/a/foo/bar",
+        version: "1.1",
         headers: Vec::new(),
         params: Vec::new(),
         query_params: Vec::new(),
@@ -175,7 +183,6 @@ fn test_param_with_multiple_parts() {
     let res = router.route(&mut req).expect("Route should be found");
     assert_eq!(res.body, "foo/bar/end".as_bytes());
 }
-
 #[test]
 fn test_param_with_multiple_parts_and_query_params() {
     let mut router = Router::new();

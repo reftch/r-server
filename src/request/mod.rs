@@ -1,6 +1,9 @@
+use memchr::memchr;
+
 pub struct Request<'a> {
     pub method: &'a str,
     pub path: &'a str,
+    pub version: &'a str,
 
     pub headers: Vec<(&'a str, &'a str)>,
     pub params: Vec<(&'a str, &'a str)>,
@@ -42,24 +45,12 @@ impl<'a> Request<'a> {
 
         let bytes = request_line.as_bytes();
 
-        let mut first_space = None;
-        let mut second_space = None;
-
-        for (i, &item) in bytes.iter().enumerate() {
-            if item == b' ' {
-                if first_space.is_none() {
-                    first_space = Some(i);
-                } else {
-                    second_space = Some(i);
-                    break;
-                }
-            }
-        }
-
-        let first_space = first_space?;
-        let second_space = second_space?;
+        let first_space = bytes.iter().position(|&b| b == b' ')?;
+        let second_space =
+            bytes[first_space + 1..].iter().position(|&b| b == b' ')? + first_space + 1;
 
         let method = &request_line[..first_space];
+        let version = &request_line[second_space + 1..];
         let full_path = &request_line[first_space + 1..second_space];
         if method.is_empty() || full_path.is_empty() {
             return None;
@@ -71,6 +62,7 @@ impl<'a> Request<'a> {
         Some(Self {
             method,
             path,
+            version,
             headers,
             params: Vec::with_capacity(4),
             query_params,
@@ -78,23 +70,33 @@ impl<'a> Request<'a> {
     }
 
     #[inline(always)]
-    fn parse_path_and_query(full_path: &str) -> (&str, Vec<(&str, &str)>) {
-        let mut query_params = Vec::with_capacity(4);
-        let path = match full_path.find('?') {
-            Some(pos) => {
-                let path = &full_path[..pos];
-                let query = &full_path[pos + 1..];
-
-                for pair in query.split('&') {
-                    if let Some((key, value)) = pair.split_once('=') {
-                        query_params.push((key, value));
-                    }
-                }
-                path
-            }
-            None => full_path,
+    fn parse_path_and_query<'b>(full_path: &'b str) -> (&'b str, Vec<(&'b str, &'b str)>) {
+        let Some(qpos) = memchr(b'?', full_path.as_bytes()) else {
+            return (full_path, Vec::with_capacity(4));
         };
-        (path, query_params)
+
+        let path = &full_path[..qpos];
+        let mut params = Vec::with_capacity(4);
+
+        let query = &full_path[qpos + 1..];
+        let bytes = query.as_bytes();
+
+        let mut start = 0;
+
+        while start < bytes.len() {
+            let end = memchr(b'&', &bytes[start..])
+                .map(|i| start + i)
+                .unwrap_or(bytes.len());
+
+            if let Some(eq) = memchr(b'=', &bytes[start..end]) {
+                let eq = start + eq;
+                params.push((&query[start..eq], &query[eq + 1..end]));
+            }
+
+            start = end + 1;
+        }
+
+        (path, params)
     }
 
     #[inline(always)]
@@ -106,10 +108,30 @@ impl<'a> Request<'a> {
                 break;
             }
 
-            if let Some((key, value)) = line.split_once(':') {
-                headers.push((key.trim(), value.trim()));
+            let bytes = line.as_bytes();
+
+            let Some(colon) = memchr::memchr(b':', bytes) else {
+                continue;
+            };
+
+            let key = &line[..colon];
+
+            let mut start = colon + 1;
+            let mut end = bytes.len();
+
+            // trim leading SP / HTAB
+            while start < end && matches!(bytes[start], b' ' | b'\t') {
+                start += 1;
             }
+
+            // trim trailing SP / HTAB
+            while end > start && matches!(bytes[end - 1], b' ' | b'\t') {
+                end -= 1;
+            }
+
+            headers.push((key, &line[start..end]));
         }
+
         headers
     }
 

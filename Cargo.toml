@@ -12,6 +12,7 @@ categories = ["network-programming"]
 
 [dependencies]
 libc = "0.2"
+memchr = "2"
 openssl = "0.10"
 
 [dev-dependencies]
