@@ -10,6 +10,7 @@ mod tests {
         let request = Request::parse(buf).expect("Should parse valid request");
         assert_eq!(request.method, "GET");
         assert_eq!(request.path, "/");
+        assert_eq!(request.version, "HTTP/1.1");
     }
 
     #[test]
@@ -72,6 +73,7 @@ mod tests {
         assert_eq!(request.path, "/");
     }
 
+    // #[test]
     #[test]
     fn test_request_malformed_request_line() {
         // Missing method
@@ -85,9 +87,9 @@ mod tests {
         assert!(request2.is_none());
 
         // Missing second space
-        // let buf4 = b"GET / \r\n\r\n";
-        // let request4 = Request::parse(buf4);
-        // assert!(request4.is_none());
+        let buf4 = b"GET / \r\n\r\n";
+        let request4 = Request::parse(buf4);
+        assert!(request4.is_none());
     }
 
     #[test]

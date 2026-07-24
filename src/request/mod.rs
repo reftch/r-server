@@ -37,22 +37,33 @@ impl<'a> Request<'a> {
 
         let mut lines = text.split("\r\n");
 
-        // ------------------------
         // Request line
-        // ------------------------
-
         let request_line = lines.next()?;
 
         let bytes = request_line.as_bytes();
 
-        let first_space = bytes.iter().position(|&b| b == b' ')?;
-        let second_space =
-            bytes[first_space + 1..].iter().position(|&b| b == b' ')? + first_space + 1;
+        let mut first_space = None;
+        let mut second_space = None;
+
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b' ' {
+                match first_space {
+                    None => first_space = Some(i),
+                    Some(_) => {
+                        second_space = Some(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let first_space = first_space?;
+        let second_space = second_space?;
 
         let method = &request_line[..first_space];
         let version = &request_line[second_space + 1..];
         let full_path = &request_line[first_space + 1..second_space];
-        if method.is_empty() || full_path.is_empty() {
+        if method.is_empty() || full_path.is_empty() || version != "HTTP/1.1" {
             return None;
         }
 
