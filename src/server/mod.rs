@@ -226,8 +226,9 @@ impl Server {
         }
     }
 
-    pub fn assets_path(&mut self, path: &str) {
+    pub fn assets_path(&mut self, path: &str) -> &mut Self {
         self.assets_path = PathBuf::from(path);
+        self
     }
 
     pub fn route(
