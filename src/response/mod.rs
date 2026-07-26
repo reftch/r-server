@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::TcpStream;
 
 pub mod builder;
 pub mod content_type;
@@ -9,21 +10,28 @@ use crate::response::builder::ResponseBuilder;
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Response {
     pub status: Status,
     pub body: Vec<u8>,
     pub content_type: ContentType,
     pub headers: HashMap<String, String>,
+    pub socket: std::net::TcpStream,
 }
 
 impl Response {
-    pub fn new(status: Status, body: impl Into<Vec<u8>>, content_type: ContentType) -> Self {
+    pub fn new(
+        socket: TcpStream,
+        status: Status,
+        body: impl Into<Vec<u8>>,
+        content_type: ContentType,
+    ) -> Self {
         Self {
             status,
             body: body.into(),
             content_type,
             headers: HashMap::new(),
+            socket,
         }
     }
 

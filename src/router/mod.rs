@@ -2,6 +2,7 @@ use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::trace;
 use std::collections::HashMap;
+use std::net::TcpStream;
 
 pub mod method;
 pub use self::method::{InvalidMethod, Method};
@@ -72,7 +73,7 @@ impl Router {
         current.handlers[method.index()] = Some(handler);
     }
 
-    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<Response> {
+    pub fn route<'a>(&'a self, request: &mut Request<'a>, socket: TcpStream) -> Option<Response> {
         let mut current = &self.root;
 
         for part in request.path.split('/').filter(|s| !s.is_empty()) {
@@ -81,7 +82,6 @@ impl Router {
             } else if let Some(pc) = &current.param_child {
                 trace!("Extracting param: {} = '{}'", pc.name, part);
                 request.params.push((pc.name.as_ref(), part));
-                // request.params.insert(pc.name.as_ref(), part);
                 current = pc.node.as_ref();
             } else {
                 return None;
@@ -94,7 +94,7 @@ impl Router {
         let handler = current.handlers[method.index()]?;
 
         trace!("Handler found. Executing...");
-        let mut response = Response::new(Status::Ok, b"", ContentType::TEXT);
+        let mut response = Response::new(socket, Status::Ok, b"", ContentType::TEXT);
         handler(request, &mut response);
 
         Some(response)

@@ -3,8 +3,8 @@
 FROM rust:1.96.1-alpine AS builder
 
 ARG ARTIFACT=rest
-ARG TARGETARCH=aarch64
-# ARG TARGETARCH=x86_64
+# ARG TARGETARCH=aarch64
+ARG TARGETARCH=x86_64
 
 # Install musl-dev for static compilation
 # Also install build essentials needed by some crates

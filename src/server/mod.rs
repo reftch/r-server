@@ -2,7 +2,8 @@ use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
+// use std::os::fd::AsFd;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -21,8 +22,12 @@ struct PollFd {
     revents: i16,
 }
 
+pub struct ConnectionMetadata<T> {
+    pub stream: Option<T>,
+}
+
 struct Connection {
-    socket: std::net::TcpStream,
+    socket: Option<TcpStream>,
     read_buf: Vec<u8>,
     write_buf: Vec<u8>,
 }
@@ -31,7 +36,7 @@ impl Connection {
     fn new(socket: std::net::TcpStream) -> io::Result<Connection> {
         socket.set_nonblocking(true)?;
         Ok(Connection {
-            socket,
+            socket: Some(socket),
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         })
@@ -81,7 +86,7 @@ impl Server {
                 return Ok(WriteState::Done);
             }
 
-            match conn.socket.write(&conn.write_buf) {
+            match conn.socket.as_mut().unwrap().write(&conn.write_buf) {
                 Ok(0) => {
                     // Ok(0) usually means the connection was closed by the remote peer
                     debug!("Socket closed by peer (EOF on write); state: Close");
@@ -114,7 +119,7 @@ impl Server {
     fn handle_read(conn: &mut Connection, router: &Router, assets_path: &Path) -> io::Result<bool> {
         let mut buf = [0; 1024];
         loop {
-            match conn.socket.read(&mut buf) {
+            match conn.socket.as_mut().unwrap().read(&mut buf) {
                 Ok(0) => {
                     // A read of 0 bytes usually signifies the peer has closed the connection.
                     debug!("Connection closed by peer (EOF); state: Terminating");
@@ -145,15 +150,32 @@ impl Server {
                 request.method, request.path
             );
 
-            let response = if let Some(resp) = router.route(&mut request) {
+            // let socket = conn.socket.try_clone();
+            // println!("Socket {:?}", socket.as_ref());
+
+            let response = if let Some(resp) = router.route(
+                &mut request,
+                conn.socket.as_mut().unwrap().try_clone().unwrap(),
+            ) {
                 trace!("Route matched for path: {}", request.path);
                 resp
-            } else if let Some(resp) = Self::handle_static(request.path, assets_path) {
+            } else if let Some(resp) = Self::handle_static(
+                request.path,
+                assets_path,
+                conn.socket.as_mut().unwrap().try_clone().unwrap(),
+            ) {
                 trace!("Static asset found: {}", request.path);
                 resp
             } else {
+                // let socket = conn.socket.try_clone();
+
                 warn!("Route not found: {}", request.path);
-                Response::new(Status::NotFound, "Not Found", ContentType::TEXT)
+                Response::new(
+                    conn.socket.as_mut().unwrap().try_clone().unwrap(),
+                    Status::NotFound,
+                    "Not Found",
+                    ContentType::TEXT,
+                )
             };
 
             // Prepare the response for writing and clear the read buffer to prepare for next cycle.
@@ -172,7 +194,7 @@ impl Server {
         Ok(true)
     }
 
-    fn handle_static(path: &str, assets_path: &Path) -> Option<Response> {
+    fn handle_static(path: &str, assets_path: &Path, socket: TcpStream) -> Option<Response> {
         let requested_path = Path::new(path);
 
         // Prevent directory traversal attacks (e.g., "/../etc/passwd")
@@ -215,6 +237,7 @@ impl Server {
                     body: content,
                     content_type,
                     headers: HashMap::new(),
+                    socket,
                 })
             }
             Err(err) => {
@@ -274,7 +297,7 @@ impl Server {
                 libc::poll(
                     poll_fds.as_mut_ptr() as *mut libc::pollfd,
                     poll_fds.len() as libc::nfds_t,
-                    2000, // 2-second timeout
+                    -1, // 2-second timeout
                 )
             };
 
