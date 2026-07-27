@@ -1,11 +1,11 @@
 use crate::response::Response;
 
-pub struct ResponseBuilder {
-    response: Response,
+pub struct ResponseBuilder<'a> {
+    response: Response<'a>,
 }
 
-impl ResponseBuilder {
-    pub fn new(response: Response) -> Self {
+impl<'a> ResponseBuilder<'a> {
+    pub fn new(response: Response<'a>) -> Self {
         Self { response }
     }
 

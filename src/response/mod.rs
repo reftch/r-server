@@ -6,22 +6,23 @@ pub mod content_type;
 pub mod status;
 
 use crate::response::builder::ResponseBuilder;
+use crate::server::ConnectionMetadata;
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
 #[derive(Debug)]
-pub struct Response {
+pub struct Response<'a> {
     pub status: Status,
     pub body: Vec<u8>,
     pub content_type: ContentType,
     pub headers: HashMap<String, String>,
-    pub socket: std::net::TcpStream,
+    pub metadata: &'a ConnectionMetadata<TcpStream>,
 }
 
-impl Response {
+impl<'a> Response<'a> {
     pub fn new(
-        socket: TcpStream,
+        metadata: &'a ConnectionMetadata<TcpStream>,
         status: Status,
         body: impl Into<Vec<u8>>,
         content_type: ContentType,
@@ -31,7 +32,7 @@ impl Response {
             body: body.into(),
             content_type,
             headers: HashMap::new(),
-            socket,
+            metadata,
         }
     }
 

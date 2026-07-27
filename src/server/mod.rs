@@ -21,22 +21,22 @@ struct PollFd {
     events: i16,
     revents: i16,
 }
-
+#[derive(Debug)]
 pub struct ConnectionMetadata<T> {
-    pub stream: Option<T>,
+    pub stream: T,
 }
 
-struct Connection {
-    socket: Option<TcpStream>,
+struct Connection<T> {
+    metadata: ConnectionMetadata<T>,
     read_buf: Vec<u8>,
     write_buf: Vec<u8>,
 }
 
-impl Connection {
-    fn new(socket: std::net::TcpStream) -> io::Result<Connection> {
+impl Connection<TcpStream> {
+    fn new(socket: TcpStream) -> io::Result<Self> {
         socket.set_nonblocking(true)?;
-        Ok(Connection {
-            socket: Some(socket),
+        Ok(Self {
+            metadata: ConnectionMetadata { stream: socket },
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         })
@@ -79,14 +79,14 @@ impl Server {
         )
     }
 
-    fn handle_write(conn: &mut Connection) -> io::Result<WriteState> {
+    fn handle_write(conn: &mut Connection<TcpStream>) -> io::Result<WriteState> {
         loop {
             if conn.write_buf.is_empty() {
                 trace!("Write buffer empty; state: Done");
                 return Ok(WriteState::Done);
             }
 
-            match conn.socket.as_mut().unwrap().write(&conn.write_buf) {
+            match conn.metadata.stream.write(&conn.write_buf) {
                 Ok(0) => {
                     // Ok(0) usually means the connection was closed by the remote peer
                     debug!("Socket closed by peer (EOF on write); state: Close");
@@ -116,10 +116,14 @@ impl Server {
         }
     }
 
-    fn handle_read(conn: &mut Connection, router: &Router, assets_path: &Path) -> io::Result<bool> {
+    fn handle_read(
+        conn: &mut Connection<TcpStream>,
+        router: &Router,
+        assets_path: &Path,
+    ) -> io::Result<bool> {
         let mut buf = [0; 1024];
         loop {
-            match conn.socket.as_mut().unwrap().read(&mut buf) {
+            match conn.metadata.stream.read(&mut buf) {
                 Ok(0) => {
                     // A read of 0 bytes usually signifies the peer has closed the connection.
                     debug!("Connection closed by peer (EOF); state: Terminating");
@@ -152,18 +156,15 @@ impl Server {
 
             // let socket = conn.socket.try_clone();
             // println!("Socket {:?}", socket.as_ref());
+            // let metadata = conn.metadata.;
 
-            let response = if let Some(resp) = router.route(
-                &mut request,
-                conn.socket.as_mut().unwrap().try_clone().unwrap(),
-            ) {
+            // let metadata = &mut conn.metadata;
+            let response = if let Some(resp) = router.route(&mut request, &conn.metadata) {
                 trace!("Route matched for path: {}", request.path);
                 resp
-            } else if let Some(resp) = Self::handle_static(
-                request.path,
-                assets_path,
-                conn.socket.as_mut().unwrap().try_clone().unwrap(),
-            ) {
+            } else if let Some(resp) =
+                Self::handle_static(request.path, assets_path, &conn.metadata)
+            {
                 trace!("Static asset found: {}", request.path);
                 resp
             } else {
@@ -171,11 +172,25 @@ impl Server {
 
                 warn!("Route not found: {}", request.path);
                 Response::new(
-                    conn.socket.as_mut().unwrap().try_clone().unwrap(),
+                    &conn.metadata,
                     Status::NotFound,
                     "Not Found",
                     ContentType::TEXT,
                 )
+                // Response {
+                //     conn.metadata,
+                //     status: Status::Ok,
+                //     body: "Not Found",
+                //     content_type: ContentType::TEXT,
+                //     headers: HashMap::new(),
+                // }
+
+                //  Some(Response {
+                //     status: Status::Ok,
+                //     body: "Not Found",
+                //     ContentType::TEXT,
+                //     headers: HashMap::new(),
+                // })
             };
 
             // Prepare the response for writing and clear the read buffer to prepare for next cycle.
@@ -194,7 +209,11 @@ impl Server {
         Ok(true)
     }
 
-    fn handle_static(path: &str, assets_path: &Path, socket: TcpStream) -> Option<Response> {
+    fn handle_static<'a>(
+        path: &str,
+        assets_path: &Path,
+        metadata: &'a ConnectionMetadata<TcpStream>,
+    ) -> Option<Response<'a>> {
         let requested_path = Path::new(path);
 
         // Prevent directory traversal attacks (e.g., "/../etc/passwd")
@@ -233,11 +252,11 @@ impl Server {
                 );
 
                 Some(Response {
+                    metadata,
                     status: Status::Ok,
                     body: content,
                     content_type,
                     headers: HashMap::new(),
-                    socket,
                 })
             }
             Err(err) => {
@@ -276,7 +295,7 @@ impl Server {
             revents: 0,
         }];
 
-        let mut connections: HashMap<i32, Connection> = HashMap::new();
+        let mut connections: HashMap<i32, Connection<TcpStream>> = HashMap::new();
 
         let startup_us = self.init_start.elapsed().as_micros();
         let local_addr = self.listener.local_addr()?;
