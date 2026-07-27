@@ -154,44 +154,55 @@ impl Server {
                 request.method, request.path
             );
 
+            let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+            if let Some(handler_fn) = router.route(&mut request) {
+                handler_fn(&request, &mut response);
+            }
+
+            // let han = if let Some(handlerFn) = router.route(&mut request) {
+            //     handlerFn(&request, &mut response);
+            //     // resp
+            //     // } else {
+            //     // None
+            // };
             // let socket = conn.socket.try_clone();
             // println!("Socket {:?}", socket.as_ref());
             // let metadata = conn.metadata.;
 
             // let metadata = &mut conn.metadata;
-            let response = if let Some(resp) = router.route(&mut request, &conn.metadata) {
-                trace!("Route matched for path: {}", request.path);
-                resp
-            } else if let Some(resp) =
-                Self::handle_static(request.path, assets_path, &conn.metadata)
-            {
-                trace!("Static asset found: {}", request.path);
-                resp
-            } else {
-                // let socket = conn.socket.try_clone();
+            // let response = if let Some(resp) = router.route(&mut request, &conn.metadata) {
+            //     trace!("Route matched for path: {}", request.path);
+            //     resp
+            // } else if let Some(resp) =
+            //     Self::handle_static(request.path, assets_path, &conn.metadata)
+            // {
+            //     trace!("Static asset found: {}", request.path);
+            //     resp
+            // } else {
+            //     // let socket = conn.socket.try_clone();
 
-                warn!("Route not found: {}", request.path);
-                Response::new(
-                    &conn.metadata,
-                    Status::NotFound,
-                    "Not Found",
-                    ContentType::TEXT,
-                )
-                // Response {
-                //     conn.metadata,
-                //     status: Status::Ok,
-                //     body: "Not Found",
-                //     content_type: ContentType::TEXT,
-                //     headers: HashMap::new(),
-                // }
+            //     warn!("Route not found: {}", request.path);
+            //     Response::new(
+            //         &conn.metadata,
+            //         Status::NotFound,
+            //         "Not Found",
+            //         ContentType::TEXT,
+            //     )
+            //     // Response {
+            //     //     conn.metadata,
+            //     //     status: Status::Ok,
+            //     //     body: "Not Found",
+            //     //     content_type: ContentType::TEXT,
+            //     //     headers: HashMap::new(),
+            //     // }
 
-                //  Some(Response {
-                //     status: Status::Ok,
-                //     body: "Not Found",
-                //     ContentType::TEXT,
-                //     headers: HashMap::new(),
-                // })
-            };
+            //     //  Some(Response {
+            //     //     status: Status::Ok,
+            //     //     body: "Not Found",
+            //     //     ContentType::TEXT,
+            //     //     headers: HashMap::new(),
+            //     // })
+            // };
 
             // Prepare the response for writing and clear the read buffer to prepare for next cycle.
             conn.write_buf = response.build();

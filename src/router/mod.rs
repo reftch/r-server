@@ -1,9 +1,7 @@
 use crate::request::Request;
-use crate::response::{ContentType, Response, Status};
-use crate::server::ConnectionMetadata;
+use crate::response::Response;
 use crate::trace;
 use std::collections::HashMap;
-use std::net::TcpStream;
 
 pub mod method;
 pub use self::method::{InvalidMethod, Method};
@@ -74,11 +72,7 @@ impl Router {
         current.handlers[method.index()] = Some(handler);
     }
 
-    pub fn route<'a>(
-        &'a self,
-        request: &mut Request<'a>,
-        metadata: &'a ConnectionMetadata<TcpStream>,
-    ) -> Option<Response> {
+    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<HandlerFn> {
         let mut current = &self.root;
 
         for part in request.path.split('/').filter(|s| !s.is_empty()) {
@@ -99,10 +93,11 @@ impl Router {
         let handler = current.handlers[method.index()]?;
 
         trace!("Handler found. Executing...");
-        let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
-        handler(request, &mut response);
+        // let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
+        // handler(request, &mut response);
 
-        Some(response)
+        // Some(response)
+        Some(handler)
     }
 }
 
