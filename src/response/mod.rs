@@ -7,6 +7,7 @@ pub mod status;
 
 use crate::response::builder::ResponseBuilder;
 use crate::server::ConnectionMetadata;
+use crate::{info, logger};
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
@@ -57,6 +58,11 @@ impl<'a> Response<'a> {
 
     pub fn content_type(&mut self, content_type: ContentType) -> &mut Self {
         self.content_type = content_type;
+        self
+    }
+
+    pub fn send(&mut self, body: String) -> &mut Self {
+        info!("Not implemented, echo: {}", body);
         self
     }
 }
