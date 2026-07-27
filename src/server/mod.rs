@@ -22,8 +22,8 @@ struct PollFd {
     revents: i16,
 }
 #[derive(Debug)]
-pub struct ConnectionMetadata<T> {
-    pub stream: T,
+pub struct ConnectionMetadata<TcpStream> {
+    pub stream: TcpStream,
 }
 
 struct Connection<T> {
@@ -157,6 +157,14 @@ impl Server {
             let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
             if let Some(handler_fn) = router.route(&mut request) {
                 handler_fn(&request, &mut response);
+            } else {
+                match Self::handle_static(request.path, assets_path, &mut response) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        response.status(Status::NotFound);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
 
             // let han = if let Some(handlerFn) = router.route(&mut request) {
@@ -223,8 +231,8 @@ impl Server {
     fn handle_static<'a>(
         path: &str,
         assets_path: &Path,
-        metadata: &'a ConnectionMetadata<TcpStream>,
-    ) -> Option<Response<'a>> {
+        response: &mut Response,
+    ) -> io::Result<bool> {
         let requested_path = Path::new(path);
 
         // Prevent directory traversal attacks (e.g., "/../etc/passwd")
@@ -236,7 +244,7 @@ impl Server {
                 "Security warning: Attempted directory traversal attack with path: {}",
                 path
             );
-            return None;
+            return Ok(false);
         }
 
         let mut full_path =
@@ -249,7 +257,7 @@ impl Server {
 
         if !full_path.is_file() {
             debug!("Static file not found: {}", full_path.display());
-            return None;
+            return Ok(false);
         }
 
         // Attempt to read the file from the filesystem
@@ -262,19 +270,23 @@ impl Server {
                     content.len()
                 );
 
-                Some(Response {
-                    metadata,
-                    status: Status::Ok,
-                    body: content,
-                    content_type,
-                    headers: HashMap::new(),
-                })
+                response.body(content);
+                response.content_type(content_type);
+                // Some(Response {
+                //     metadata,
+                //     status: Status::Ok,
+                //     body: content,
+                //     content_type,
+                //     headers: HashMap::new(),
+                // })
+                return Ok(true);
             }
             Err(err) => {
                 // Log as error because a file that 'should' exist but can't be read
                 // is a filesystem issue (permissions, locked files, etc.)
                 error!("Failed to read static file {:?}: {}", full_path, err);
-                None
+                // None
+                return Ok(false);
             }
         }
     }
