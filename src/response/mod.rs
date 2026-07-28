@@ -1,29 +1,28 @@
 use std::collections::HashMap;
-use std::net::TcpStream;
 
 pub mod builder;
 pub mod content_type;
 pub mod status;
 
+use crate::connection::ConnectionMetadata;
+use crate::info;
 use crate::response::builder::ResponseBuilder;
-use crate::server::ConnectionMetadata;
-use crate::{info, logger};
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
 #[derive(Debug)]
-pub struct Response<'a> {
+pub struct Response<'a, T> {
     pub status: Status,
     pub body: Vec<u8>,
     pub content_type: ContentType,
     pub headers: HashMap<String, String>,
-    pub metadata: &'a ConnectionMetadata<TcpStream>,
+    pub metadata: &'a ConnectionMetadata<T>,
 }
 
-impl<'a> Response<'a> {
+impl<'a, T> Response<'a, T> {
     pub fn new(
-        metadata: &'a ConnectionMetadata<TcpStream>,
+        metadata: &'a ConnectionMetadata<T>,
         status: Status,
         body: impl Into<Vec<u8>>,
         content_type: ContentType,

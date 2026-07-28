@@ -8,6 +8,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::connection::ConnectionMetadata;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Router;
@@ -21,13 +22,9 @@ struct PollFd {
     events: i16,
     revents: i16,
 }
-#[derive(Debug)]
-pub struct ConnectionMetadata<TcpStream> {
-    pub stream: TcpStream,
-}
 
-struct Connection<T> {
-    metadata: ConnectionMetadata<T>,
+struct Connection<TcpStream> {
+    metadata: ConnectionMetadata<TcpStream>,
     read_buf: Vec<u8>,
     write_buf: Vec<u8>,
 }
@@ -52,7 +49,7 @@ enum WriteState {
 pub struct Server {
     init_start: Instant,
     listener: TcpListener,
-    router: Arc<Router>,
+    router: Arc<Router<TcpStream>>,
     assets_path: PathBuf,
 }
 
@@ -118,7 +115,7 @@ impl Server {
 
     fn handle_read(
         conn: &mut Connection<TcpStream>,
-        router: &Router,
+        router: &Router<TcpStream>,
         assets_path: &Path,
     ) -> io::Result<bool> {
         let mut buf = [0; 1024];
@@ -161,6 +158,7 @@ impl Server {
                 match Self::handle_static(request.path, assets_path, &mut response) {
                     Ok(true) => {}
                     Ok(false) => {
+                        response.body("Not Found");
                         response.status(Status::NotFound);
                     }
                     Err(e) => return Err(e),
@@ -231,7 +229,7 @@ impl Server {
     fn handle_static<'a>(
         path: &str,
         assets_path: &Path,
-        response: &mut Response,
+        response: &mut Response<TcpStream>,
     ) -> io::Result<bool> {
         let requested_path = Path::new(path);
 
@@ -300,7 +298,7 @@ impl Server {
         &mut self,
         method: crate::router::Method,
         path: &str,
-        handler: crate::router::HandlerFn,
+        handler: crate::router::HandlerFn<TcpStream>,
     ) -> &mut Self {
         if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
             trace!("Successfully added route: {} {}", method.index(), path);
