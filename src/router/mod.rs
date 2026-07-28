@@ -93,10 +93,7 @@ impl<T> Router<T> {
         let handler = current.handlers[method.index()]?;
 
         trace!("Handler found. Executing...");
-        // let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
-        // handler(request, &mut response);
 
-        // Some(response)
         Some(handler)
     }
 }
