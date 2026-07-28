@@ -32,7 +32,6 @@ pub enum TlsState {
 
 struct Connection {
     metadata: ConnectionMetadata<Option<TlsState>>,
-    // tls: Option<TlsState>,
     read_buf: Vec<u8>,
     write_buf: Vec<u8>,
 }
@@ -41,7 +40,6 @@ impl Connection {
     fn new(tls: TlsState) -> Self {
         Self {
             metadata: ConnectionMetadata { stream: Some(tls) },
-            // tls: Some(tls),
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         }
