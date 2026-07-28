@@ -1,3 +1,4 @@
+use crate::connection::ConnectionMetadata;
 use crate::{debug, error, info, trace, warn};
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use openssl::ssl::{
@@ -24,13 +25,14 @@ struct PollFd {
     revents: i16,
 }
 
-enum TlsState {
+pub enum TlsState {
     Handshaking(MidHandshakeSslStream<TcpStream>),
     Connected(SslStream<TcpStream>),
 }
 
 struct Connection {
-    tls: Option<TlsState>,
+    metadata: ConnectionMetadata<Option<TlsState>>,
+    // tls: Option<TlsState>,
     read_buf: Vec<u8>,
     write_buf: Vec<u8>,
 }
@@ -38,14 +40,21 @@ struct Connection {
 impl Connection {
     fn new(tls: TlsState) -> Self {
         Self {
-            tls: Some(tls),
+            metadata: ConnectionMetadata { stream: Some(tls) },
+            // tls: Some(tls),
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         }
     }
 
     fn fd(&self) -> i32 {
-        match self.tls.as_ref().unwrap() {
+        let tls_state = self
+            .metadata
+            .stream
+            .as_ref()
+            .expect("Stream should be initialized");
+
+        match tls_state {
             TlsState::Connected(s) => s.get_ref().as_raw_fd(),
             TlsState::Handshaking(s) => s.get_ref().as_raw_fd(),
         }
@@ -61,7 +70,7 @@ enum WriteState {
 pub struct Server {
     init_start: Instant,
     listener: TcpListener,
-    router: Arc<Router>,
+    router: Arc<Router<Option<TlsState>>>,
     assets_path: PathBuf,
     acceptor: Arc<SslAcceptor>,
 }
@@ -119,7 +128,7 @@ impl Server {
                 return Ok(WriteState::Done);
             }
 
-            match conn.tls.as_mut().unwrap() {
+            match conn.metadata.stream.as_mut().unwrap() {
                 TlsState::Handshaking(_) => {
                     // TLS is not ready yet
                     return Ok(WriteState::Continue);
@@ -154,11 +163,15 @@ impl Server {
         }
     }
 
-    fn handle_read(conn: &mut Connection, router: &Router, assets_path: &Path) -> io::Result<bool> {
+    fn handle_read(
+        conn: &mut Connection,
+        router: &Router<Option<TlsState>>,
+        assets_path: &Path,
+    ) -> io::Result<bool> {
         let mut buf = [0u8; 1024];
 
         loop {
-            let stream = match conn.tls.as_mut().unwrap() {
+            let stream = match conn.metadata.stream.as_mut().unwrap() {
                 TlsState::Connected(stream) => stream,
 
                 // TLS handshake is not complete yet
@@ -197,16 +210,19 @@ impl Server {
                 request.method, request.path
             );
 
-            let response = if let Some(resp) = router.route(&mut request) {
-                trace!("Route matched for path: {}", request.path);
-                resp
-            } else if let Some(resp) = Self::handle_static(request.path, assets_path) {
-                trace!("Static asset found: {}", request.path);
-                resp
+            let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+            if let Some(handler_fn) = router.route(&mut request) {
+                handler_fn(&request, &mut response);
             } else {
-                warn!("Route not found: {}", request.path);
-                Response::new(Status::NotFound, "Not Found", ContentType::TEXT)
-            };
+                match Self::handle_static(request.path, assets_path, &mut response) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        response.body("Not Found");
+                        response.status(Status::NotFound);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
 
             conn.write_buf = response.build();
             conn.read_buf.clear();
@@ -223,7 +239,11 @@ impl Server {
         Ok(true)
     }
 
-    fn handle_static(path: &str, assets_path: &Path) -> Option<Response> {
+    fn handle_static<'a>(
+        path: &str,
+        assets_path: &Path,
+        response: &mut Response<Option<TlsState>>,
+    ) -> io::Result<bool> {
         let requested_path = Path::new(path);
 
         // Prevent directory traversal attacks (e.g., "/../etc/passwd")
@@ -231,7 +251,11 @@ impl Server {
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
         {
-            return None;
+            warn!(
+                "Security warning: Attempted directory traversal attack with path: {}",
+                path
+            );
+            return Ok(false);
         }
 
         let mut full_path =
@@ -243,66 +267,44 @@ impl Server {
         }
 
         if !full_path.is_file() {
-            return None;
+            debug!("Static file not found: {}", full_path.display());
+            return Ok(false);
         }
 
         // Attempt to read the file from the filesystem
         match fs::read(&full_path) {
             Ok(content) => {
-                let content_type = Self::get_content_type(&full_path);
+                let content_type = ContentType::get_content_type(&full_path);
                 trace!(
                     "Successfully read static file: {} ({} bytes)",
                     full_path.display(),
                     content.len()
                 );
 
-                Some(Response {
-                    status: Status::Ok,
-                    body: content,
-                    content_type,
-                    headers: HashMap::new(),
-                })
+                response.body(content);
+                response.content_type(content_type);
+                return Ok(true);
             }
             Err(err) => {
                 // Log as error because a file that 'should' exist but can't be read
                 // is a filesystem issue (permissions, locked files, etc.)
                 error!("Failed to read static file {:?}: {}", full_path, err);
-                None
+                // None
+                return Ok(false);
             }
         }
     }
 
-    fn get_content_type(path: &Path) -> ContentType {
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("html") => ContentType::HTML,
-            Some("css") => ContentType::CSS,
-            Some("js") => ContentType::JAVASCRIPT,
-            Some("jpg") | Some("jpeg") => ContentType::JPEG,
-            Some("png") => ContentType::PNG,
-            Some("xml") => ContentType::XML,
-            Some("json") => ContentType::JSON,
-            Some("txt") => ContentType::TEXT,
-            Some("gif") => ContentType::GIF,
-            Some("svg") => ContentType::SVG,
-            Some("pdf") => ContentType::PDF,
-            Some("mp3") => ContentType::MP3,
-            Some("mp4") => ContentType::MP4,
-            Some("webm") => ContentType::WEBM,
-            Some("woff2") => ContentType::WOFF2,
-            Some("ttf") => ContentType::TTF,
-            _ => ContentType::UNKNOWN,
-        }
-    }
-
-    pub fn assets_path(&mut self, path: &str) {
+    pub fn assets_path(&mut self, path: &str) -> &mut Self {
         self.assets_path = PathBuf::from(path);
+        self
     }
 
     pub fn route(
         &mut self,
         method: crate::router::Method,
         path: &str,
-        handler: crate::router::HandlerFn,
+        handler: crate::router::HandlerFn<Option<TlsState>>,
     ) -> &mut Self {
         if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
             trace!("Successfully added route: {} {}", method.index(), path);
@@ -425,7 +427,10 @@ impl Server {
 
                 if let Some(conn) = connections.get_mut(&fd) {
                     // Finish TLS handshake
-                    if matches!(conn.tls.as_ref(), Some(TlsState::Handshaking(_))) {
+                    if matches!(
+                        conn.metadata.stream.as_ref(),
+                        Some(TlsState::Handshaking(_))
+                    ) {
                         match Self::continue_handshake(conn) {
                             Ok(true) => {
                                 // Log when the handshake is successfully finished
@@ -501,11 +506,11 @@ impl Server {
     }
 
     fn continue_handshake(conn: &mut Connection) -> io::Result<bool> {
-        let state = conn.tls.take().unwrap();
+        let state = conn.metadata.stream.take().unwrap();
 
         match state {
             TlsState::Connected(stream) => {
-                conn.tls = Some(TlsState::Connected(stream));
+                conn.metadata.stream = Some(TlsState::Connected(stream));
                 Ok(true)
             }
 
@@ -513,14 +518,14 @@ impl Server {
                 Ok(stream) => {
                     // Log successful completion of the handshake
                     debug!("TLS handshake completed successfully.");
-                    conn.tls = Some(TlsState::Connected(stream));
+                    conn.metadata.stream = Some(TlsState::Connected(stream));
                     Ok(true)
                 }
                 Err(HandshakeError::WouldBlock(mid)) => {
                     // NOTE: We do NOT log WouldBlock here because it is a normal,
                     // high-frequency event in non-blocking I/O. Logging this would
                     // cause massive performance issues and log spam.
-                    conn.tls = Some(TlsState::Handshaking(mid));
+                    conn.metadata.stream = Some(TlsState::Handshaking(mid));
                     Ok(false)
                 }
                 Err(e) => {

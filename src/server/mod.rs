@@ -269,13 +269,6 @@ impl Server {
 
                 response.body(content);
                 response.content_type(content_type);
-                // Some(Response {
-                //     metadata,
-                //     status: Status::Ok,
-                //     body: content,
-                //     content_type,
-                //     headers: HashMap::new(),
-                // })
                 return Ok(true);
             }
             Err(err) => {

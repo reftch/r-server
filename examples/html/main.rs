@@ -1,8 +1,8 @@
-use r_server::{response, router::Method, server::Server};
+use r_server::{logger, response, router::Method, sslserver::Server};
 
 fn main() -> std::io::Result<()> {
     // r_server::logger::set_level(logger::LogLevel::Trace);
-    Server::new("0.0.0.0:8082")?
+    Server::new("0.0.0.0:8443")?
         .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.send("Hello".to_string());
