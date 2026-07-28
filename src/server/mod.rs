@@ -164,51 +164,6 @@ impl Server {
                 }
             }
 
-            // let han = if let Some(handlerFn) = router.route(&mut request) {
-            //     handlerFn(&request, &mut response);
-            //     // resp
-            //     // } else {
-            //     // None
-            // };
-            // let socket = conn.socket.try_clone();
-            // println!("Socket {:?}", socket.as_ref());
-            // let metadata = conn.metadata.;
-
-            // let metadata = &mut conn.metadata;
-            // let response = if let Some(resp) = router.route(&mut request, &conn.metadata) {
-            //     trace!("Route matched for path: {}", request.path);
-            //     resp
-            // } else if let Some(resp) =
-            //     Self::handle_static(request.path, assets_path, &conn.metadata)
-            // {
-            //     trace!("Static asset found: {}", request.path);
-            //     resp
-            // } else {
-            //     // let socket = conn.socket.try_clone();
-
-            //     warn!("Route not found: {}", request.path);
-            //     Response::new(
-            //         &conn.metadata,
-            //         Status::NotFound,
-            //         "Not Found",
-            //         ContentType::TEXT,
-            //     )
-            //     // Response {
-            //     //     conn.metadata,
-            //     //     status: Status::Ok,
-            //     //     body: "Not Found",
-            //     //     content_type: ContentType::TEXT,
-            //     //     headers: HashMap::new(),
-            //     // }
-
-            //     //  Some(Response {
-            //     //     status: Status::Ok,
-            //     //     body: "Not Found",
-            //     //     ContentType::TEXT,
-            //     //     headers: HashMap::new(),
-            //     // })
-            // };
-
             // Prepare the response for writing and clear the read buffer to prepare for next cycle.
             conn.write_buf = response.build();
             conn.read_buf.clear();
@@ -225,7 +180,7 @@ impl Server {
         Ok(true)
     }
 
-    fn handle_static<'a>(
+    fn handle_static(
         path: &str,
         assets_path: &Path,
         response: &mut Response<TcpStream>,
@@ -269,14 +224,14 @@ impl Server {
 
                 response.body(content);
                 response.content_type(content_type);
-                return Ok(true);
+                Ok(true)
             }
             Err(err) => {
                 // Log as error because a file that 'should' exist but can't be read
                 // is a filesystem issue (permissions, locked files, etc.)
                 error!("Failed to read static file {:?}: {}", full_path, err);
                 // None
-                return Ok(false);
+                Ok(false)
             }
         }
     }
@@ -312,7 +267,7 @@ impl Server {
 
         let startup_us = self.init_start.elapsed().as_micros();
         let local_addr = self.listener.local_addr()?;
-        // info! is perfect here; it's a one-time startup event.
+
         info!(
             "Server started on http://{} in {}µs",
             local_addr, startup_us
@@ -432,7 +387,6 @@ impl Server {
                             indices_to_remove.push(i);
                         }
                     }
-                    // }
                 }
             }
 

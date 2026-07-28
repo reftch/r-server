@@ -237,7 +237,7 @@ impl Server {
         Ok(true)
     }
 
-    fn handle_static<'a>(
+    fn handle_static(
         path: &str,
         assets_path: &Path,
         response: &mut Response<Option<TlsState>>,
@@ -281,14 +281,14 @@ impl Server {
 
                 response.body(content);
                 response.content_type(content_type);
-                return Ok(true);
+                Ok(true)
             }
             Err(err) => {
                 // Log as error because a file that 'should' exist but can't be read
                 // is a filesystem issue (permissions, locked files, etc.)
                 error!("Failed to read static file {:?}: {}", full_path, err);
                 // None
-                return Ok(false);
+                Ok(false)
             }
         }
     }
