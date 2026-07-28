@@ -2,11 +2,12 @@ use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::connection::ConnectionMetadata;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Router;
@@ -21,17 +22,17 @@ struct PollFd {
     revents: i16,
 }
 
-struct Connection {
-    socket: std::net::TcpStream,
+struct Connection<TcpStream> {
+    metadata: ConnectionMetadata<TcpStream>,
     read_buf: Vec<u8>,
     write_buf: Vec<u8>,
 }
 
-impl Connection {
-    fn new(socket: std::net::TcpStream) -> io::Result<Connection> {
+impl Connection<TcpStream> {
+    fn new(socket: TcpStream) -> io::Result<Self> {
         socket.set_nonblocking(true)?;
-        Ok(Connection {
-            socket,
+        Ok(Self {
+            metadata: ConnectionMetadata { stream: socket },
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         })
@@ -47,7 +48,7 @@ enum WriteState {
 pub struct Server {
     init_start: Instant,
     listener: TcpListener,
-    router: Arc<Router>,
+    router: Arc<Router<TcpStream>>,
     assets_path: PathBuf,
 }
 
@@ -74,14 +75,14 @@ impl Server {
         )
     }
 
-    fn handle_write(conn: &mut Connection) -> io::Result<WriteState> {
+    fn handle_write(conn: &mut Connection<TcpStream>) -> io::Result<WriteState> {
         loop {
             if conn.write_buf.is_empty() {
                 trace!("Write buffer empty; state: Done");
                 return Ok(WriteState::Done);
             }
 
-            match conn.socket.write(&conn.write_buf) {
+            match conn.metadata.stream.write(&conn.write_buf) {
                 Ok(0) => {
                     // Ok(0) usually means the connection was closed by the remote peer
                     debug!("Socket closed by peer (EOF on write); state: Close");
@@ -111,10 +112,14 @@ impl Server {
         }
     }
 
-    fn handle_read(conn: &mut Connection, router: &Router, assets_path: &Path) -> io::Result<bool> {
+    fn handle_read(
+        conn: &mut Connection<TcpStream>,
+        router: &Router<TcpStream>,
+        assets_path: &Path,
+    ) -> io::Result<bool> {
         let mut buf = [0; 1024];
         loop {
-            match conn.socket.read(&mut buf) {
+            match conn.metadata.stream.read(&mut buf) {
                 Ok(0) => {
                     // A read of 0 bytes usually signifies the peer has closed the connection.
                     debug!("Connection closed by peer (EOF); state: Terminating");
@@ -145,16 +150,64 @@ impl Server {
                 request.method, request.path
             );
 
-            let response = if let Some(resp) = router.route(&mut request) {
-                trace!("Route matched for path: {}", request.path);
-                resp
-            } else if let Some(resp) = Self::handle_static(request.path, assets_path) {
-                trace!("Static asset found: {}", request.path);
-                resp
+            let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+            if let Some(handler_fn) = router.route(&mut request) {
+                handler_fn(&request, &mut response);
             } else {
-                warn!("Route not found: {}", request.path);
-                Response::new(Status::NotFound, "Not Found", ContentType::TEXT)
-            };
+                match Self::handle_static(request.path, assets_path, &mut response) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        response.body("Not Found");
+                        response.status(Status::NotFound);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+
+            // let han = if let Some(handlerFn) = router.route(&mut request) {
+            //     handlerFn(&request, &mut response);
+            //     // resp
+            //     // } else {
+            //     // None
+            // };
+            // let socket = conn.socket.try_clone();
+            // println!("Socket {:?}", socket.as_ref());
+            // let metadata = conn.metadata.;
+
+            // let metadata = &mut conn.metadata;
+            // let response = if let Some(resp) = router.route(&mut request, &conn.metadata) {
+            //     trace!("Route matched for path: {}", request.path);
+            //     resp
+            // } else if let Some(resp) =
+            //     Self::handle_static(request.path, assets_path, &conn.metadata)
+            // {
+            //     trace!("Static asset found: {}", request.path);
+            //     resp
+            // } else {
+            //     // let socket = conn.socket.try_clone();
+
+            //     warn!("Route not found: {}", request.path);
+            //     Response::new(
+            //         &conn.metadata,
+            //         Status::NotFound,
+            //         "Not Found",
+            //         ContentType::TEXT,
+            //     )
+            //     // Response {
+            //     //     conn.metadata,
+            //     //     status: Status::Ok,
+            //     //     body: "Not Found",
+            //     //     content_type: ContentType::TEXT,
+            //     //     headers: HashMap::new(),
+            //     // }
+
+            //     //  Some(Response {
+            //     //     status: Status::Ok,
+            //     //     body: "Not Found",
+            //     //     ContentType::TEXT,
+            //     //     headers: HashMap::new(),
+            //     // })
+            // };
 
             // Prepare the response for writing and clear the read buffer to prepare for next cycle.
             conn.write_buf = response.build();
@@ -172,7 +225,11 @@ impl Server {
         Ok(true)
     }
 
-    fn handle_static(path: &str, assets_path: &Path) -> Option<Response> {
+    fn handle_static<'a>(
+        path: &str,
+        assets_path: &Path,
+        response: &mut Response<TcpStream>,
+    ) -> io::Result<bool> {
         let requested_path = Path::new(path);
 
         // Prevent directory traversal attacks (e.g., "/../etc/passwd")
@@ -184,7 +241,7 @@ impl Server {
                 "Security warning: Attempted directory traversal attack with path: {}",
                 path
             );
-            return None;
+            return Ok(false);
         }
 
         let mut full_path =
@@ -197,7 +254,7 @@ impl Server {
 
         if !full_path.is_file() {
             debug!("Static file not found: {}", full_path.display());
-            return None;
+            return Ok(false);
         }
 
         // Attempt to read the file from the filesystem
@@ -210,18 +267,16 @@ impl Server {
                     content.len()
                 );
 
-                Some(Response {
-                    status: Status::Ok,
-                    body: content,
-                    content_type,
-                    headers: HashMap::new(),
-                })
+                response.body(content);
+                response.content_type(content_type);
+                return Ok(true);
             }
             Err(err) => {
                 // Log as error because a file that 'should' exist but can't be read
                 // is a filesystem issue (permissions, locked files, etc.)
                 error!("Failed to read static file {:?}: {}", full_path, err);
-                None
+                // None
+                return Ok(false);
             }
         }
     }
@@ -235,7 +290,7 @@ impl Server {
         &mut self,
         method: crate::router::Method,
         path: &str,
-        handler: crate::router::HandlerFn,
+        handler: crate::router::HandlerFn<TcpStream>,
     ) -> &mut Self {
         if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
             trace!("Successfully added route: {} {}", method.index(), path);
@@ -253,7 +308,7 @@ impl Server {
             revents: 0,
         }];
 
-        let mut connections: HashMap<i32, Connection> = HashMap::new();
+        let mut connections: HashMap<i32, Connection<TcpStream>> = HashMap::new();
 
         let startup_us = self.init_start.elapsed().as_micros();
         let local_addr = self.listener.local_addr()?;
@@ -274,7 +329,7 @@ impl Server {
                 libc::poll(
                     poll_fds.as_mut_ptr() as *mut libc::pollfd,
                     poll_fds.len() as libc::nfds_t,
-                    2000, // 2-second timeout
+                    -1, // 2-second timeout
                 )
             };
 

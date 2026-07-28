@@ -6,7 +6,8 @@ mod tests {
 
     #[test]
     fn test_response_new() {
-        let response = Response::new(Status::Ok, "Hello World", ContentType::TEXT);
+        let metadata = crate::connection::ConnectionMetadata { stream: () };
+        let response = Response::new(&metadata, Status::Ok, "Hello World", ContentType::TEXT);
         assert_eq!(response.status, Status::Ok);
         assert_eq!(response.body, b"Hello World".to_vec());
         assert_eq!(response.content_type, ContentType::TEXT);
@@ -14,7 +15,8 @@ mod tests {
 
     #[test]
     fn test_response_to_bytes() {
-        let response = Response::new(Status::Ok, "OK", ContentType::TEXT);
+        let metadata = crate::connection::ConnectionMetadata { stream: () };
+        let response = Response::new(&metadata, Status::Ok, "OK", ContentType::TEXT);
         let bytes = response.build();
         let bytes_str = String::from_utf8(bytes).unwrap();
         assert!(bytes_str.contains("HTTP/1.1 200 OK"));
@@ -31,7 +33,8 @@ mod tests {
 
     #[test]
     fn test_response_add_header() {
-        let mut response = Response::new(Status::Ok, "OK", ContentType::TEXT);
+        let metadata = crate::connection::ConnectionMetadata { stream: () };
+        let mut response = Response::new(&metadata, Status::Ok, "OK", ContentType::TEXT);
         response.header("X-Test".to_string(), "Value".to_string());
         assert_eq!(response.headers.get("X-Test").unwrap(), "Value");
 
@@ -56,7 +59,8 @@ mod tests {
 
     #[test]
     fn test_response_404() {
-        let response = Response::new(Status::NotFound, "Not Found", ContentType::TEXT);
+        let metadata = crate::connection::ConnectionMetadata { stream: () };
+        let response = Response::new(&metadata, Status::NotFound, "Not Found", ContentType::TEXT);
         let bytes = response.build();
         let bytes_str = String::from_utf8(bytes).unwrap();
         assert!(bytes_str.contains("HTTP/1.1 404 Not Found"));
@@ -64,7 +68,8 @@ mod tests {
 
     #[test]
     fn test_response_to_bytes_with_headers() {
-        let mut response = Response::new(Status::Ok, "OK", ContentType::TEXT);
+        let metadata = crate::connection::ConnectionMetadata { stream: () };
+        let mut response = Response::new(&metadata, Status::Ok, "OK", ContentType::TEXT);
         response.header("Custom-Header".to_string(), "Custom-Value".to_string());
         let bytes = response.build();
         let bytes_str = String::from_utf8(bytes).unwrap();

@@ -1,28 +1,28 @@
 use crate::request::Request;
-use crate::response::{ContentType, Response, Status};
+use crate::response::Response;
 use crate::trace;
 use std::collections::HashMap;
 
 pub mod method;
 pub use self::method::{InvalidMethod, Method};
 
-pub type HandlerResponse = Response;
-pub type HandlerFn = fn(&Request, &mut Response);
+pub type HandlerResponse<'a, T> = Response<'a, T>;
+pub type HandlerFn<T> = fn(&Request, &mut Response<T>);
 
 const METHOD_COUNT: usize = 7;
 
-struct ParamChild {
+struct ParamChild<T> {
     name: Box<str>,
-    node: Box<TrieNode>,
+    node: Box<TrieNode<T>>,
 }
 
-struct TrieNode {
-    children: HashMap<Box<str>, Box<TrieNode>>,
-    param_child: Option<ParamChild>,
-    handlers: [Option<HandlerFn>; METHOD_COUNT],
+struct TrieNode<T> {
+    children: HashMap<Box<str>, Box<TrieNode<T>>>,
+    param_child: Option<ParamChild<T>>,
+    handlers: [Option<HandlerFn<T>>; METHOD_COUNT],
 }
 
-impl TrieNode {
+impl<T> TrieNode<T> {
     fn new() -> Self {
         Self {
             children: HashMap::new(),
@@ -32,24 +32,24 @@ impl TrieNode {
     }
 }
 
-pub struct Router {
-    root: TrieNode,
+pub struct Router<T> {
+    root: TrieNode<T>,
 }
 
-impl Default for Router {
+impl<T> Default for Router<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Router {
+impl<T> Router<T> {
     pub fn new() -> Self {
         Self {
             root: TrieNode::new(),
         }
     }
 
-    pub fn add_route(&mut self, method: Method, path: &str, handler: HandlerFn) {
+    pub fn add_route(&mut self, method: Method, path: &str, handler: HandlerFn<T>) {
         let mut current = &mut self.root;
 
         for part in path.split('/').filter(|s| !s.is_empty()) {
@@ -72,7 +72,7 @@ impl Router {
         current.handlers[method.index()] = Some(handler);
     }
 
-    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<Response> {
+    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<HandlerFn<T>> {
         let mut current = &self.root;
 
         for part in request.path.split('/').filter(|s| !s.is_empty()) {
@@ -81,7 +81,6 @@ impl Router {
             } else if let Some(pc) = &current.param_child {
                 trace!("Extracting param: {} = '{}'", pc.name, part);
                 request.params.push((pc.name.as_ref(), part));
-                // request.params.insert(pc.name.as_ref(), part);
                 current = pc.node.as_ref();
             } else {
                 return None;
@@ -94,10 +93,8 @@ impl Router {
         let handler = current.handlers[method.index()]?;
 
         trace!("Handler found. Executing...");
-        let mut response = Response::new(Status::Ok, b"", ContentType::TEXT);
-        handler(request, &mut response);
 
-        Some(response)
+        Some(handler)
     }
 }
 

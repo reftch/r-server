@@ -12,7 +12,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    fn hello_handler(_req: &Request, res: &mut Response) {
+    fn hello_handler(_req: &Request, res: &mut Response<TcpStream>) {
         res.body("Hello, World!");
     }
 

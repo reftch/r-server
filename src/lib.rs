@@ -1,3 +1,4 @@
+pub mod connection;
 pub mod logger;
 pub mod request;
 pub mod response;
