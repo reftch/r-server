@@ -1,7 +1,7 @@
 use super::*;
-use crate::connection::ConnectionMetadata;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
+use crate::server::connection::ConnectionMetadata;
 use std::str::FromStr;
 
 fn hello_handler<T>(_req: &Request, res: &mut Response<'_, T>) {

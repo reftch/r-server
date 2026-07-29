@@ -1,4 +1,4 @@
-use crate::connection::ConnectionMetadata;
+use crate::server::connection::ConnectionMetadata;
 use crate::{debug, error, info, trace, warn};
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use openssl::ssl::{
