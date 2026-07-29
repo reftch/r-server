@@ -89,13 +89,11 @@ impl<T> Router<T> {
                 Some(next) => {
                     current = next;
                 }
-                None => match current.param_child.as_ref() {
-                    Some(param) => {
-                        request.params.push((param.name.as_ref(), part));
-                        current = &param.node;
-                    }
-                    None => return None,
-                },
+                None => {
+                    let param = current.param_child.as_ref()?;
+                    request.params.push((param.name.as_ref(), part));
+                    current = &param.node;
+                }
             }
         }
 
