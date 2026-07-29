@@ -45,8 +45,8 @@ Here is a comprehensive example demonstrating how to initialize the server, conf
 use r_server::{response, router::Method, server::Server};
 
 fn main() -> std::io::Result<()> {
-    Server::new("0.0.0.0:8080")?
-        .route(Method::GET, "/api/v1/inc/:id", |req, res| {
+    HttpServer::new("0.0.0.0:8080")?
+        .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)
                     .body(format!("{{\"value\":{}}}", id));
@@ -72,8 +72,8 @@ The usage pattern is nearly identical, but you use the `sslserver::Server` inste
 use r_server::{response, router::Method, sslserver::Server};
 
 fn main() -> std::io::Result<()> {
-    Server::new("0.0.0.0:8443")?
-        .route(Method::GET, "/api/v1/inc/:id", |req, res| {
+    HttpsServer::new("0.0.0.0:8443")?
+        .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)
                     .body(format!("{{\"value\":{}}}", id));

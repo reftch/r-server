@@ -5,7 +5,7 @@ mod tests {
     use crate::request::Request;
     use crate::response::Response;
     use crate::router::{Method, Router};
-    use crate::server::Server;
+    use crate::server::http::Server;
 
     use std::io::{Read, Write};
     use std::net::TcpStream;

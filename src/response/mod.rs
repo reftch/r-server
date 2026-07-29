@@ -4,9 +4,9 @@ pub mod builder;
 pub mod content_type;
 pub mod status;
 
-use crate::connection::ConnectionMetadata;
 use crate::info;
 use crate::response::builder::ResponseBuilder;
+use crate::server::connection::ConnectionMetadata;
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
