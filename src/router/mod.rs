@@ -1,5 +1,5 @@
+use crate::request::Request;
 use crate::response::Response;
-use crate::{info, request::Request};
 use std::collections::HashMap;
 
 pub mod method;
@@ -67,8 +67,6 @@ impl<T> Router<T> {
                     .as_mut();
             }
         }
-
-        info!("REgistered {}", method.index());
 
         current.handlers[method.index()] = Some(handler);
     }
