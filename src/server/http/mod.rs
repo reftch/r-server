@@ -75,6 +75,10 @@ impl Server {
         self
     }
 
+    pub fn run(&mut self) -> io::Result<()> {
+        self.run_loop()
+    }
+
     fn new_with_assets(addr: &str, assets_path: PathBuf) -> io::Result<Self> {
         let init_start = Instant::now();
         let router = Arc::new(Router::new());
@@ -254,7 +258,7 @@ impl Server {
         }
     }
 
-    pub fn run(&mut self) -> io::Result<()> {
+    fn run_loop(&mut self) -> io::Result<()> {
         self.listener.set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {

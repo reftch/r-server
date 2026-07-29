@@ -78,6 +78,28 @@ impl Server {
         Self::new_with_assets(addr, PathBuf::from("./assets"))
     }
 
+    pub fn assets_path(&mut self, path: &str) -> &mut Self {
+        self.assets_path = PathBuf::from(path);
+        self
+    }
+
+    pub fn route(
+        &mut self,
+        method: crate::router::Method,
+        path: &str,
+        handler: crate::router::HandlerFn<Option<TlsState>>,
+    ) -> &mut Self {
+        if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
+            trace!("Successfully added route: {} {}", method.index(), path);
+            router.add_route(method, path, handler);
+        }
+        self
+    }
+
+    pub fn run(&mut self) -> io::Result<()> {
+        self.run_loop()
+    }
+
     fn new_with_assets(addr: &str, assets_path: PathBuf) -> io::Result<Self> {
         let init_start = Instant::now();
 
@@ -293,25 +315,7 @@ impl Server {
         }
     }
 
-    pub fn assets_path(&mut self, path: &str) -> &mut Self {
-        self.assets_path = PathBuf::from(path);
-        self
-    }
-
-    pub fn route(
-        &mut self,
-        method: crate::router::Method,
-        path: &str,
-        handler: crate::router::HandlerFn<Option<TlsState>>,
-    ) -> &mut Self {
-        if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
-            trace!("Successfully added route: {} {}", method.index(), path);
-            router.add_route(method, path, handler);
-        }
-        self
-    }
-
-    pub fn run(&mut self) -> io::Result<()> {
+    fn run_loop(&mut self) -> io::Result<()> {
         self.listener.set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {
