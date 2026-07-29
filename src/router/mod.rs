@@ -1,6 +1,5 @@
-use crate::request::Request;
 use crate::response::Response;
-use crate::trace;
+use crate::{info, request::Request};
 use std::collections::HashMap;
 
 pub mod method;
@@ -69,32 +68,41 @@ impl<T> Router<T> {
             }
         }
 
+        info!("REgistered {}", method.index());
+
         current.handlers[method.index()] = Some(handler);
     }
 
+    #[inline]
     pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<HandlerFn<T>> {
         let mut current = &self.root;
 
-        for part in request.path.split('/').filter(|s| !s.is_empty()) {
-            if let Some(next) = current.children.get(part) {
-                current = next.as_ref();
-            } else if let Some(pc) = &current.param_child {
-                trace!("Extracting param: {} = '{}'", pc.name, part);
-                request.params.push((pc.name.as_ref(), part));
-                current = pc.node.as_ref();
-            } else {
-                return None;
+        let path = request
+            .path
+            .split_once('?')
+            .map_or(request.path, |(p, _)| p);
+
+        for part in path.split('/') {
+            if part.is_empty() {
+                continue;
+            }
+
+            match current.children.get(part) {
+                Some(next) => {
+                    current = next;
+                }
+                None => match current.param_child.as_ref() {
+                    Some(param) => {
+                        request.params.push((param.name.as_ref(), part));
+                        current = &param.node;
+                    }
+                    None => return None,
+                },
             }
         }
 
         let method: Method = request.method.parse().expect("Failed to parse");
-
-        trace!("Looking up handler for method: {}", method.to_string());
-        let handler = current.handlers[method.index()]?;
-
-        trace!("Handler found. Executing...");
-
-        Some(handler)
+        current.handlers[method.index()]
     }
 }
 

@@ -75,6 +75,7 @@ impl Server {
         self
     }
 
+    /// Run polling
     pub fn run(&mut self) -> io::Result<()> {
         self.run_loop()
     }
