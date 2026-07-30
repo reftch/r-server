@@ -1,4 +1,3 @@
-use crate::server::ServerBuilder;
 use crate::server::connection::ConnectionMetadata;
 use crate::{debug, error, info, trace, warn};
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
@@ -75,7 +74,7 @@ pub struct Server {
 }
 
 impl Server {
-    fn new(addr: &str) -> io::Result<Self> {
+    pub fn new(addr: &str) -> io::Result<Self> {
         Self::new_with_assets(addr, PathBuf::from("./assets"))
     }
 
@@ -100,10 +99,6 @@ impl Server {
     /// Run polling
     pub fn run(&mut self) -> io::Result<()> {
         self.run_loop()
-    }
-
-    pub fn builder(addr: &str) -> io::Result<ServerBuilder<Self>> {
-        Ok(ServerBuilder::new(Self::new(addr)?))
     }
 
     fn new_with_assets(addr: &str, assets_path: PathBuf) -> io::Result<Self> {

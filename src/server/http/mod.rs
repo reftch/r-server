@@ -10,7 +10,6 @@ use std::time::Instant;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Router;
-use crate::server::ServerBuilder;
 use crate::server::connection::ConnectionMetadata;
 use crate::{debug, error, info, trace, warn};
 
@@ -54,7 +53,7 @@ pub struct Server {
 }
 
 impl Server {
-    fn new(addr: &str) -> io::Result<Self> {
+    pub fn new(addr: &str) -> io::Result<Self> {
         Self::new_with_assets(addr, PathBuf::from("./assets"))
     }
 
@@ -74,10 +73,6 @@ impl Server {
             router.add_route(method, path, handler);
         }
         self
-    }
-
-    pub fn builder(addr: &str) -> io::Result<ServerBuilder<Self>> {
-        Ok(ServerBuilder::new(Self::new(addr)?))
     }
 
     /// Run polling
