@@ -48,8 +48,10 @@ pub struct HttpsServer {
 
 impl HttpsServer {
     /// Creates a new HttpsServerBuilder from an existing HTTPS server instance.
-    pub fn new(server: crate::server::https::Server) -> Self {
-        Self { server }
+    pub fn new(addr: &str) -> io::Result<Self> {
+        Ok(Self {
+            server: crate::server::https::Server::new(addr)?,
+        })
     }
 
     /// Sets the directory for serving static files.

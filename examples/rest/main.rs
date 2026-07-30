@@ -1,7 +1,7 @@
-use r_server::{response, router::Method, server::HttpServer};
+use r_server::{response, router::Method, server::HttpsServer};
 
 fn main() -> std::io::Result<()> {
-    HttpServer::new("0.0.0.0:8080")?
+    HttpsServer::new("0.0.0.0:8082")?
         .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)

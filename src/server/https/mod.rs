@@ -533,7 +533,7 @@ impl Server {
                 }
                 Err(e) => {
                     // Log actual errors that prevent the handshake from completing
-                    error!("TLS handshake failed: {:?}", e);
+                    trace!("TLS handshake failed: {:?}", e);
                     Err(io::Error::other(format!("{:?}", e)))
                 }
             },
