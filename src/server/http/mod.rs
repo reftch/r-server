@@ -182,6 +182,7 @@ impl Server {
                 {
                     response.body(content);
                     response.content_type(content_type);
+                    response.header("Cache-control", "public, max-age=3600");
 
                     if !etag.is_empty() {
                         response.header("ETag", etag);
