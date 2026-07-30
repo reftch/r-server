@@ -1,78 +1,89 @@
 use crate::router::{HandlerFn, Method};
 use std::io;
+use std::net::TcpStream;
 
 pub mod connection;
 pub mod http;
 pub mod https;
 
-/// A builder for the standard HTTP server using TcpStream.
-pub struct HttpServer {
-    server: crate::server::http::Server,
+/// Common interface implemented by all server types.
+pub trait ServerCore {
+    type Stream;
+
+    fn route(&mut self, method: Method, path: &str, handler: HandlerFn<Self::Stream>);
+
+    fn assets_path(&mut self, path: &str);
+
+    fn run(&mut self) -> io::Result<()>;
 }
 
-impl HttpServer {
-    /// Creates a new HttpServerBuilder listening on the given address.
-    pub fn new(addr: &str) -> io::Result<Self> {
-        Ok(Self {
-            server: crate::server::http::Server::new(addr)?,
-        })
+/// Generic server builder.
+pub struct ServerBuilder<S>
+where
+    S: ServerCore,
+{
+    server: S,
+}
+
+impl<S> ServerBuilder<S>
+where
+    S: ServerCore,
+{
+    /// Creates a builder from an existing server.
+    pub fn new(server: S) -> Self {
+        Self { server }
     }
 
-    /// Sets the directory for serving static files.
+    /// Register a route.
+    pub fn route(mut self, method: Method, path: &str, handler: HandlerFn<S::Stream>) -> Self {
+        self.server.route(method, path, handler);
+        self
+    }
+
+    /// Configure the static assets directory.
     pub fn assets_path(mut self, path: &str) -> Self {
         self.server.assets_path(path);
         self
     }
 
-    /// Adds a route to the server with a standard TcpStream handler.
-    pub fn route(
-        mut self,
-        method: Method,
-        path: &str,
-        handler: HandlerFn<std::net::TcpStream>,
-    ) -> Self {
-        self.server.route(method, path, handler);
-        self
-    }
-
-    /// Starts the server's event loop.
+    /// Start the server.
     pub fn run(mut self) -> io::Result<()> {
         self.server.run()
     }
 }
 
-/// A builder for the secure HTTPS server.
-pub struct HttpsServer {
-    server: crate::server::https::Server,
+/// Convenience aliases.
+pub type HttpServer = ServerBuilder<http::Server>;
+pub type HttpsServer = ServerBuilder<https::Server>;
+
+impl ServerCore for http::Server {
+    type Stream = TcpStream;
+
+    fn route(&mut self, method: Method, path: &str, handler: HandlerFn<Self::Stream>) {
+        http::Server::route(self, method, path, handler);
+    }
+
+    fn assets_path(&mut self, path: &str) {
+        http::Server::assets_path(self, path);
+    }
+
+    fn run(&mut self) -> io::Result<()> {
+        http::Server::run(self)
+    }
 }
 
-impl HttpsServer {
-    /// Creates a new HttpsServerBuilder from an existing HTTPS server instance.
-    pub fn new(addr: &str) -> io::Result<Self> {
-        Ok(Self {
-            server: crate::server::https::Server::new(addr)?,
-        })
+impl ServerCore for https::Server {
+    type Stream = Option<https::TlsState>;
+
+    fn route(&mut self, method: Method, path: &str, handler: HandlerFn<Self::Stream>) {
+        https::Server::route(self, method, path, handler);
     }
 
-    /// Sets the directory for serving static files.
-    pub fn assets_path(mut self, path: &str) -> Self {
-        self.server.assets_path(path);
-        self
+    fn assets_path(&mut self, path: &str) {
+        https::Server::assets_path(self, path);
     }
 
-    /// Adds a route to the server with an Option<TlsState> handler.
-    pub fn route(
-        mut self,
-        method: Method,
-        path: &str,
-        handler: crate::router::HandlerFn<Option<crate::server::https::TlsState>>,
-    ) -> Self {
-        self.server.route(method, path, handler);
-        self
-    }
-
-    /// Starts the server's event loop.
-    pub fn run(mut self) -> io::Result<()> {
-        self.server.run()
+    fn run(&mut self) -> io::Result<()> {
+        https::Server::run(self)
     }
 }
