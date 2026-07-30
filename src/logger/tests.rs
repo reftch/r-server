@@ -1,3 +1,5 @@
+use crate::utils::format_timestamp;
+
 use super::*;
 
 #[test]

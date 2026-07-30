@@ -40,8 +40,12 @@ impl<'a, T> Response<'a, T> {
         ResponseBuilder::new(self).build()
     }
 
-    pub fn header(&mut self, key: String, value: String) -> &mut Self {
-        self.headers.entry(key).or_insert(value);
+    pub fn header<K, V>(&mut self, key: K, value: V) -> &mut Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.headers.entry(key.into()).or_insert(value.into());
         self
     }
 

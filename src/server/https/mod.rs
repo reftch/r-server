@@ -1,11 +1,11 @@
 use crate::server::connection::ConnectionMetadata;
+use crate::utils::get_file_info;
 use crate::{debug, error, info, trace, warn};
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use openssl::ssl::{
     HandshakeError, MidHandshakeSslStream, SslAcceptor, SslFiletype, SslMethod, SslStream,
 };
 use std::collections::HashMap;
-use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
@@ -235,13 +235,22 @@ impl Server {
             if let Some(handler_fn) = router.route(&mut request) {
                 handler_fn(&request, &mut response);
             } else {
-                match Self::handle_static(request.path, assets_path, &mut response) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        response.body("Not Found");
-                        response.status(Status::NotFound);
+                if let Some((content, content_type, etag, last_modified)) =
+                    get_file_info(request.path, &assets_path)
+                {
+                    response.body(content);
+                    response.content_type(content_type);
+
+                    if !etag.is_empty() {
+                        response.header("ETag", etag);
                     }
-                    Err(e) => return Err(e),
+
+                    if !last_modified.is_empty() {
+                        response.header("Last-Modified", last_modified);
+                    }
+                } else {
+                    response.body("Not Found");
+                    response.status(Status::NotFound);
                 }
             }
 
@@ -258,62 +267,6 @@ impl Server {
         }
 
         Ok(true)
-    }
-
-    fn handle_static(
-        path: &str,
-        assets_path: &Path,
-        response: &mut Response<Option<TlsState>>,
-    ) -> io::Result<bool> {
-        let requested_path = Path::new(path);
-
-        // Prevent directory traversal attacks (e.g., "/../etc/passwd")
-        if requested_path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            warn!(
-                "Security warning: Attempted directory traversal attack with path: {}",
-                path
-            );
-            return Ok(false);
-        }
-
-        let mut full_path =
-            assets_path.join(requested_path.strip_prefix("/").unwrap_or(requested_path));
-
-        if full_path.is_dir() {
-            // If a directory is requested, default to index.html as per standard web server behavior
-            full_path.push("index.html");
-        }
-
-        if !full_path.is_file() {
-            debug!("Static file not found: {}", full_path.display());
-            return Ok(false);
-        }
-
-        // Attempt to read the file from the filesystem
-        match fs::read(&full_path) {
-            Ok(content) => {
-                let content_type = ContentType::get_content_type(&full_path);
-                trace!(
-                    "Successfully read static file: {} ({} bytes)",
-                    full_path.display(),
-                    content.len()
-                );
-
-                response.body(content);
-                response.content_type(content_type);
-                Ok(true)
-            }
-            Err(err) => {
-                // Log as error because a file that 'should' exist but can't be read
-                // is a filesystem issue (permissions, locked files, etc.)
-                error!("Failed to read static file {:?}: {}", full_path, err);
-                // None
-                Ok(false)
-            }
-        }
     }
 
     fn run_loop(&mut self) -> io::Result<()> {
