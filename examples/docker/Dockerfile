@@ -1,8 +1,9 @@
+ARG ARTIFACT=html
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries
 FROM rust:1.96.1-alpine AS builder
 
-ARG ARTIFACT=rest
+ARG ARTIFACT
 # ARG TARGETARCH=aarch64
 ARG TARGETARCH=x86_64
 
@@ -29,6 +30,8 @@ RUN cargo build --release --example $ARTIFACT --target $TARGETARCH-unknown-linux
 # Scratch is an empty image - just the binary and nothing else
 FROM scratch
 
+ARG ARTIFACT
+
 # Copy SSL certificates for HTTPS support
 # COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # COPY --from=builder /app/cert.pem /cert.pem
@@ -36,6 +39,7 @@ FROM scratch
 
 # Copy the statically linked binary
 COPY --from=builder /application /application
+COPY --from=builder /app/examples/$ARTIFACT/assets /assets
 
 # Scratch images have no shell, so we use the exec form
 ENTRYPOINT ["/application"]

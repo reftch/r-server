@@ -358,8 +358,7 @@ impl Server {
                 let fd = poll_fds[*i].fd;
                 connections.remove(&fd);
                 poll_fds.remove(*i);
-                // trace!("FD {}: Removed from event loop", fd);
-                info!("FD {}: Removed from event loop", fd);
+                trace!("FD {}: Removed from event loop", fd);
             }
         }
     }
