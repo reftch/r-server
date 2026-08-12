@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Home Page</title>
+        <link rel="stylesheet" href="styles.css" />
+
+        <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta5/dist/htmx.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta5/dist/ext/hx-ws.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta5/dist/ext/hx-sse.js"></script>
+    </head>
+
+    <body>
+        <div class="container">
+            <h1>WebSocket Demo</h1>
+
+            <div
+                hx-ws:connect="/wstime"
+                hx-target="#wstime"
+                hx-swap="outerHTML"
+            >
+                <div id="wstime"></div>
+            </div>
+
+            <a href="/">SSE Demo Page</a>
+        </div>
+    </body>
+</html>

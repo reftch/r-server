@@ -178,7 +178,7 @@ impl Server {
                 handler_fn(&request, &mut response);
             } else {
                 if let Some((content, content_type, etag, last_modified)) =
-                    get_file_info(request.path, &assets_path)
+                    get_file_info(request.path, assets_path)
                 {
                     response.body(content);
                     response.content_type(content_type);
