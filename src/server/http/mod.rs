@@ -197,6 +197,10 @@ impl Server {
                 }
             }
 
+            if response.content_type == ContentType::SSE {
+                return Ok(true);
+            }
+
             // Prepare the response for writing and clear the read buffer to prepare for next cycle.
             conn.write_buf = response.build();
             conn.read_buf.clear();
@@ -354,7 +358,8 @@ impl Server {
                 let fd = poll_fds[*i].fd;
                 connections.remove(&fd);
                 poll_fds.remove(*i);
-                trace!("FD {}: Removed from event loop", fd);
+                // trace!("FD {}: Removed from event loop", fd);
+                info!("FD {}: Removed from event loop", fd);
             }
         }
     }

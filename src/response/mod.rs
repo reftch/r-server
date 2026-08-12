@@ -45,7 +45,7 @@ impl SseWriter for Option<TlsState> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Response<'a, T> {
     pub status: Status,
     pub body: Vec<u8>,

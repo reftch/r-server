@@ -1,6 +1,10 @@
 use std::{thread, time::Duration};
 
-use r_server::{response, router::Method, server::http::Server};
+use r_server::{
+    response::{self, ContentType, Response, Status},
+    router::Method,
+    server::{connection::ConnectionMetadata, http::Server},
+};
 
 fn main() -> std::io::Result<()> {
     // r_server::logger::set_level(logger::LogLevel::Trace);
@@ -12,23 +16,20 @@ fn main() -> std::io::Result<()> {
             }
         })
         .route(Method::GET, "/stream", |_, res| {
-            // res.enable_sse();
+            res.content_type(response::ContentType::SSE);
 
-            // let res_ptr = res.try_into()?;
-            let res_for_thread = res;
+            let stream = res.metadata.stream.try_clone().expect("Error cloning");
             thread::spawn(move || {
+                let conn = ConnectionMetadata { stream };
+                let response = Response::new(&conn, Status::Ok, b"", ContentType::SSE);
+
                 let mut i = 0;
                 loop {
                     i += 1;
                     let message = format!("data: {}\n\n", i);
-                    if let Err(e) = res_for_thread.sse(&message) {
-                        eprintln!("SSE connection closed: {}", e);
-                        break;
-                    }
+                    println!("{}", message);
+                    response.sse(&message);
                     thread::sleep(Duration::from_secs(1));
-                    if i >= 100 {
-                        break;
-                    }
                 }
             });
         })

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ContentType {
     HTML,
     CSS,
