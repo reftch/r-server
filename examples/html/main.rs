@@ -20,9 +20,9 @@ fn main() -> std::io::Result<()> {
             task::repeat_every(
                 req.path,
                 res.metadata.stream.try_clone().unwrap(),
-                Duration::from_secs(1),
-                move |response| {
-                    let _ = response.stream(&format!(
+                Duration::from_millis(10),
+                move |res| {
+                    let _ = res.stream(&format!(
                         "{}\n\n",
                         COUNTER.fetch_add(1, Ordering::Relaxed) + 1
                     ));
