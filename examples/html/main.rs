@@ -10,6 +10,7 @@ use std::{
 };
 
 use r_server::{
+    logger,
     response::{self, ContentType, Response, Status},
     router::Method,
     server::{connection::ConnectionMetadata, http::Server},
@@ -76,9 +77,9 @@ where
 }
 
 fn main() -> std::io::Result<()> {
+    r_server::logger::set_level(logger::LogLevel::Info);
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    // r_server::logger::set_level(logger::LogLevel::Trace);
     Server::new("0.0.0.0:8082")?
         .route(Method::GET, "/api/v1/users/:id", move |req, res| {
             if let Some(id) = req.param("id") {
@@ -87,15 +88,17 @@ fn main() -> std::io::Result<()> {
             }
         })
         .route(Method::GET, "/stream", move |_, res| {
-            res.content_type(response::ContentType::SSE);
-            let stream = res.metadata.stream.try_clone().unwrap();
-
-            repeat_every("stream", stream, Duration::from_secs(1), move |response| {
-                let _ = response.sse(&format!(
-                    "data: {}\n\n",
-                    COUNTER.fetch_add(1, Ordering::Relaxed) + 1
-                ));
-            });
+            repeat_every(
+                "stream",
+                res.metadata.stream.try_clone().unwrap(),
+                Duration::from_secs(1),
+                move |response| {
+                    let _ = response.sse(&format!(
+                        "{}\n\n",
+                        COUNTER.fetch_add(1, Ordering::Relaxed) + 1
+                    ));
+                },
+            );
         })
         .assets_path("./examples/html/assets")
         .run()?;

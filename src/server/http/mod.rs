@@ -197,7 +197,8 @@ impl Server {
                 }
             }
 
-            if response.content_type == ContentType::SSE {
+            //
+            if response.body.is_empty() {
                 return Ok(true);
             }
 
