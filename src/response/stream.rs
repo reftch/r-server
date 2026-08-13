@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 
-use crate::server::https::TlsState;
+use crate::core::https::TlsState;
 
 pub trait StreamWriter {
     fn write(&self, data: &[u8]) -> io::Result<()>;

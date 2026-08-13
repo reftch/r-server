@@ -1,13 +1,13 @@
+use r_server::{core::http::Server, logger, response, router::Method, task};
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
-use r_server::{logger, response, router::Method, server::http::Server, task};
+static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn main() -> std::io::Result<()> {
     r_server::logger::set_level(logger::LogLevel::Info);
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     Server::new("0.0.0.0:8082")?
         .route(Method::GET, "/api/v1/users/:id", move |req, res| {
@@ -16,11 +16,18 @@ fn main() -> std::io::Result<()> {
                     .body(format!("{{\"value\":{}}}", id));
             }
         })
+        .route(Method::GET, "/users", move |_, res| {
+            task::once(res.metadata.try_clone().unwrap(), move |res| {
+                res.content_type(response::ContentType::JSON);
+                res.body(format!("{{\"value\":{}}}", 100));
+                res.flush().ok();
+            });
+        })
         .route(Method::GET, "/stream", move |req, res| {
             task::repeat_every(
                 req.path,
                 res.metadata.try_clone().unwrap(),
-                Duration::from_millis(500),
+                Duration::from_millis(50),
                 move |res| {
                     let _ = res.stream(&format!(
                         "{}\n\n",

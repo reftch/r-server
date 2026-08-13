@@ -6,10 +6,10 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Router;
-use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
 

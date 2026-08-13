@@ -9,13 +9,24 @@ use std::{
 };
 
 use crate::{
+    core::connection::{ConnectionMetadata, ConnectionStreamClone},
     response::{ContentType, Response, Status},
-    server::connection::{ConnectionMetadata, ConnectionStreamClone},
 };
 
 type Cancel = Arc<AtomicBool>;
 
 static TASKS: OnceLock<Mutex<HashMap<String, Cancel>>> = OnceLock::new();
+
+pub fn once<M, F>(conn: ConnectionMetadata<M>, mut f: F)
+where
+    M: ConnectionStreamClone + Send + 'static,
+    F: FnMut(&mut Response<'_, M>) + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut response = Response::new(&conn, Status::Ok, b"", ContentType::TEXT);
+        f(&mut response);
+    });
+}
 
 pub fn repeat_every<M, F>(key: &str, conn: ConnectionMetadata<M>, delay: Duration, mut f: F)
 where

@@ -8,7 +8,7 @@ pub mod stream;
 
 use crate::response::builder::ResponseBuilder;
 use crate::response::stream::StreamWriter;
-use crate::server::connection::ConnectionMetadata;
+use crate::core::connection::ConnectionMetadata;
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
@@ -95,6 +95,24 @@ where
                \r\n\
                {}\n\n",
             payload
+        );
+
+        // Write the response to the stream
+        self.metadata.stream.write(response.as_bytes())
+    }
+
+    pub fn flush(&self) -> io::Result<()> {
+        // let response = self.build();
+        // Write the response to the stream
+        // self.metadata.stream.write(&)
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+               Content-Type: text/event-stream\r\n\
+               Cache-Control: no-cache\r\n\
+               Connection: keep-alive\r\n\
+               \r\n\
+               {}\n\n",
+            "test"
         );
 
         // Write the response to the stream
