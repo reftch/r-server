@@ -19,8 +19,8 @@ fn main() -> std::io::Result<()> {
         .route(Method::GET, "/stream", move |req, res| {
             task::repeat_every(
                 req.path,
-                res.metadata.stream.try_clone().unwrap(),
-                Duration::from_millis(10),
+                res.metadata.try_clone().unwrap(),
+                Duration::from_millis(500),
                 move |res| {
                     let _ = res.stream(&format!(
                         "{}\n\n",

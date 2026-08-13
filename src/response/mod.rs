@@ -6,7 +6,6 @@ pub mod content_type;
 pub mod status;
 pub mod stream;
 
-use crate::info;
 use crate::response::builder::ResponseBuilder;
 use crate::response::stream::StreamWriter;
 use crate::server::connection::ConnectionMetadata;
@@ -14,13 +13,25 @@ use crate::server::connection::ConnectionMetadata;
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Response<'a, T> {
     pub status: Status,
     pub body: Vec<u8>,
     pub content_type: ContentType,
     pub headers: HashMap<String, String>,
     pub metadata: &'a ConnectionMetadata<T>,
+}
+
+impl<'a, T> Clone for Response<'a, T> {
+    fn clone(&self) -> Self {
+        Self {
+            status: self.status,
+            body: self.body.clone(),
+            content_type: ContentType::SSE,
+            headers: self.headers.clone(),
+            metadata: self.metadata,
+        }
+    }
 }
 
 impl<'a, T> Response<'a, T> {
@@ -64,21 +75,6 @@ impl<'a, T> Response<'a, T> {
 
     pub fn content_type(&mut self, content_type: ContentType) -> &mut Self {
         self.content_type = content_type;
-        self
-    }
-
-    pub fn enable_sse(&mut self) -> &mut Self {
-        self.content_type = ContentType::SSE;
-
-        self.header("Cache-Control", "no-cache");
-        self.header("Connection", "keep-alive");
-        self.header("Content-Type", "text/event-stream");
-
-        self
-    }
-
-    pub fn send(&mut self, body: String) -> &mut Self {
-        info!("Not implemented, echo: {}", body);
         self
     }
 }

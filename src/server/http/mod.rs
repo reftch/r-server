@@ -9,7 +9,7 @@ use std::time::Instant;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Router;
-use crate::server::connection::ConnectionMetadata;
+use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
 
@@ -36,6 +36,12 @@ impl Connection<TcpStream> {
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         })
+    }
+}
+
+impl ConnectionStreamClone for TcpStream {
+    fn clone_stream(&self) -> io::Result<Self> {
+        self.try_clone()
     }
 }
 
@@ -197,7 +203,7 @@ impl Server {
                 }
             }
 
-            //
+            // Prevent sending an empty body
             if response.body.is_empty() {
                 return Ok(true);
             }
