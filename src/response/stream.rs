@@ -15,24 +15,6 @@ impl StreamWriter for TcpStream {
     }
 }
 
-impl StreamWriter for Option<TlsState> {
-    fn write(&self, data: &[u8]) -> io::Result<()> {
-        match self {
-            Some(TlsState::Connected(stream)) => {
-                let mut stream = stream.get_ref().try_clone()?;
-                stream.write_all(data)
-            }
-
-            Some(TlsState::Handshaking(stream)) => {
-                let mut stream = stream.get_ref().try_clone()?;
-                stream.write_all(data)
-            }
-
-            None => Ok(()),
-        }
-    }
-}
-
 impl StreamWriter for Option<Arc<Mutex<Option<TlsState>>>> {
     fn write(&self, data: &[u8]) -> io::Result<()> {
         let shared = self.as_ref().ok_or_else(|| {

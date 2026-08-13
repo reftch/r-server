@@ -6,7 +6,6 @@ pub mod content_type;
 pub mod status;
 pub mod stream;
 
-use crate::info;
 use crate::response::builder::ResponseBuilder;
 use crate::response::stream::StreamWriter;
 use crate::server::connection::ConnectionMetadata;
@@ -78,21 +77,6 @@ impl<'a, T> Response<'a, T> {
         self.content_type = content_type;
         self
     }
-
-    // pub fn enable_sse(&mut self) -> &mut Self {
-    //     self.content_type = ContentType::SSE;
-
-    //     self.header("Cache-Control", "no-cache");
-    //     self.header("Connection", "keep-alive");
-    //     self.header("Content-Type", "text/event-stream");
-
-    //     self
-    // }
-
-    // pub fn send(&mut self, body: String) -> &mut Self {
-    //     info!("Not implemented, echo: {}", body);
-    //     self
-    // }
 }
 
 impl<'a, T> Response<'a, T>

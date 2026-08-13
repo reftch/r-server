@@ -1,4 +1,4 @@
-use crate::server::connection::ConnectionMetadata;
+use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace, warn};
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
@@ -48,16 +48,6 @@ impl Connection {
         }
     }
 
-    fn try_clone(&self) -> Option<Self> {
-        let stream = self.metadata.stream.as_ref().cloned();
-
-        Some(Self {
-            metadata: ConnectionMetadata { stream },
-            read_buf: self.read_buf.clone(),
-            write_buf: self.write_buf.clone(),
-        })
-    }
-
     fn fd(&self) -> i32 {
         let shared = self
             .metadata
@@ -73,6 +63,12 @@ impl Connection {
             TlsState::Connected(stream) => stream.get_ref().as_raw_fd(),
             TlsState::Handshaking(stream) => stream.get_ref().as_raw_fd(),
         }
+    }
+}
+
+impl ConnectionStreamClone for Option<Arc<Mutex<Option<TlsState>>>> {
+    fn clone_stream(&self) -> io::Result<Self> {
+        Ok(self.clone())
     }
 }
 
@@ -501,7 +497,6 @@ impl Server {
                         match Self::continue_handshake(conn) {
                             Ok(true) => {
                                 debug!("TLS Handshake completed for FD {}", fd);
-
                                 item.events = POLLIN;
                             }
 
@@ -512,7 +507,6 @@ impl Server {
 
                             Err(_) => {
                                 debug!("TLS Handshake failed for FD {}", fd);
-
                                 indices_to_remove.push(i);
                                 continue;
                             }
@@ -535,13 +529,11 @@ impl Server {
                                      (WriteState::Close)",
                                     fd
                                 );
-
                                 indices_to_remove.push(i);
                             }
 
                             Err(e) => {
                                 error!("Write error on FD {}: {}", fd, e);
-
                                 indices_to_remove.push(i);
                             }
                         }
@@ -561,13 +553,11 @@ impl Server {
                                      (Read finished)",
                                     fd
                                 );
-
                                 indices_to_remove.push(i);
                             }
 
                             Err(e) => {
                                 error!("Read error on FD {}: {}", fd, e);
-
                                 indices_to_remove.push(i);
                             }
                         }
