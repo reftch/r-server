@@ -14,13 +14,25 @@ use crate::server::connection::ConnectionMetadata;
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Response<'a, T> {
     pub status: Status,
     pub body: Vec<u8>,
     pub content_type: ContentType,
     pub headers: HashMap<String, String>,
     pub metadata: &'a ConnectionMetadata<T>,
+}
+
+impl<'a, T> Clone for Response<'a, T> {
+    fn clone(&self) -> Self {
+        Self {
+            status: self.status,
+            body: self.body.clone(),
+            content_type: ContentType::SSE,
+            headers: self.headers.clone(),
+            metadata: self.metadata,
+        }
+    }
 }
 
 impl<'a, T> Response<'a, T> {
