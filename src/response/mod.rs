@@ -79,20 +79,20 @@ impl<'a, T> Response<'a, T> {
         self
     }
 
-    pub fn enable_sse(&mut self) -> &mut Self {
-        self.content_type = ContentType::SSE;
+    // pub fn enable_sse(&mut self) -> &mut Self {
+    //     self.content_type = ContentType::SSE;
 
-        self.header("Cache-Control", "no-cache");
-        self.header("Connection", "keep-alive");
-        self.header("Content-Type", "text/event-stream");
+    //     self.header("Cache-Control", "no-cache");
+    //     self.header("Connection", "keep-alive");
+    //     self.header("Content-Type", "text/event-stream");
 
-        self
-    }
+    //     self
+    // }
 
-    pub fn send(&mut self, body: String) -> &mut Self {
-        info!("Not implemented, echo: {}", body);
-        self
-    }
+    // pub fn send(&mut self, body: String) -> &mut Self {
+    //     info!("Not implemented, echo: {}", body);
+    //     self
+    // }
 }
 
 impl<'a, T> Response<'a, T>

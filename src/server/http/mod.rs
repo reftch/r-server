@@ -197,7 +197,7 @@ impl Server {
                 }
             }
 
-            //
+            // Prevent sending an empty body
             if response.body.is_empty() {
                 return Ok(true);
             }
