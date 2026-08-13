@@ -1,4 +1,4 @@
-use r_server::{response, router::Method, server::http::Server};
+use r_server::{core::http::Server, response, router::Method};
 
 fn main() -> std::io::Result<()> {
     Server::new("127.0.0.1:8080")?
