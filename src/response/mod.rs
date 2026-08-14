@@ -1,19 +1,19 @@
 use std::collections::HashMap;
-use std::io;
+use std::{fmt, io};
 
 pub mod builder;
 pub mod content_type;
 pub mod status;
 pub mod stream;
 
+use crate::core::connection::ConnectionMetadata;
 use crate::response::builder::ResponseBuilder;
 use crate::response::stream::StreamWriter;
-use crate::core::connection::ConnectionMetadata;
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct Response<'a, T> {
     pub status: Status,
     pub body: Vec<u8>,
@@ -22,12 +22,24 @@ pub struct Response<'a, T> {
     pub metadata: &'a ConnectionMetadata<T>,
 }
 
+impl<'a, T> fmt::Debug for Response<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Response")
+            .field("status", &self.status)
+            .field("body", &self.body)
+            .field("content_type", &self.content_type)
+            .field("headers", &self.headers)
+            .field("metadata", &"<omitted>")
+            .finish()
+    }
+}
+
 impl<'a, T> Clone for Response<'a, T> {
     fn clone(&self) -> Self {
         Self {
             status: self.status,
             body: self.body.clone(),
-            content_type: ContentType::SSE,
+            content_type: self.content_type.clone(),
             headers: self.headers.clone(),
             metadata: self.metadata,
         }
@@ -102,21 +114,8 @@ where
     }
 
     pub fn flush(&self) -> io::Result<()> {
-        // let response = self.build();
-        // Write the response to the stream
-        // self.metadata.stream.write(&)
-        let response = format!(
-            "HTTP/1.1 200 OK\r\n\
-               Content-Type: text/event-stream\r\n\
-               Cache-Control: no-cache\r\n\
-               Connection: keep-alive\r\n\
-               \r\n\
-               {}\n\n",
-            "test"
-        );
-
-        // Write the response to the stream
-        self.metadata.stream.write(response.as_bytes())
+        let response = self.clone().build();
+        self.metadata.stream.write(&response)
     }
 }
 
