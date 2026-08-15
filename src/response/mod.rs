@@ -13,7 +13,6 @@ use crate::response::stream::StreamWriter;
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
-// #[derive(Debug)]
 pub struct Response<'a, T> {
     pub status: Status,
     pub body: Vec<u8>,

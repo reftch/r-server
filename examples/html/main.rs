@@ -6,6 +6,11 @@ use std::{
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+// fn api_handler(...) {
+//     res.content_type(response::ContentType::JSON)
+//         .body(format!("{{\"value\":{}}}", 1));
+// }
+
 fn main() -> std::io::Result<()> {
     r_server::logger::set_level(logger::LogLevel::Info);
 
@@ -16,13 +21,7 @@ fn main() -> std::io::Result<()> {
                     .body(format!("{{\"value\":{}}}", id));
             }
         })
-        .route(Method::GET, "/users", move |_, res| {
-            task::once(res.metadata.try_clone().unwrap(), move |res| {
-                res.content_type(response::ContentType::JSON);
-                res.body(format!("{{\"value\":{}}}", 100));
-                res.flush().ok();
-            });
-        })
+        // .route(Method::GET, "/api/v2/users/:id", http::to(api_handler))
         .route(Method::GET, "/stream", move |req, res| {
             task::repeat_every(
                 req.path,

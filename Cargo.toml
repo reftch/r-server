@@ -18,6 +18,12 @@ openssl = "0.10"
 [dev-dependencies]
 tempfile = "3"
 
+[build]
+rustflags = ["-Z", "threads=8"]
+
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 strip = true
 opt-level = 3
