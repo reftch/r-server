@@ -1,5 +1,7 @@
 use r_server::{
+    client::Client,
     core::http::Server,
+    debug,
     response::{ContentType, Status::BadRequest},
     router::Method,
 };
@@ -23,14 +25,14 @@ fn main() -> std::io::Result<()> {
                 }
             };
 
-            println!("Latitude: {}", latitude);
-            println!("Longtitude: {}", longtitude);
+            debug!("Latitude: {}, Longtitude: {}", latitude, longtitude);
 
-            // Your temperature lookup/calculation goes here.
-            // let temperature = 25.5;
+            let client = Client::new("https://api.open-meteo.com");
+            let path =
+                "/v1/forecast?latitude=48.78&longitude=9.18&current=temperature_2m,wind_speed_10m";
 
-            res.content_type(ContentType::JSON)
-                .body(format!("{{\"value\":{}}}", latitude));
+            let body = client.get(path).unwrap();
+            res.content_type(ContentType::JSON).body(body);
         })
         .run()?;
 
