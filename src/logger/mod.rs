@@ -4,19 +4,26 @@ use std::sync::atomic::{AtomicU8, Ordering}; // Added for global state
 
 use crate::utils::get_timestamp;
 
-// Define Log Levels
+/// Represents the severity level of a log message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum LogLevel {
+    /// Extremely fine-grained informational events that are most useful to debug an application.
     Trace = 0,
+    /// Fine-grained informational events that are useful to debug an application.
     Debug = 1,
+    /// Informational messages that highlight the progress of the application at coarse-grained level.
     Info = 2,
+    /// Potentially harmful situations.
     Warn = 3,
+    /// Error events that might still allow the application to continue running.
     Error = 4,
+    /// Disables all logging.
     None = 5,
 }
 
 impl LogLevel {
+    /// Returns the string representation of the log level.
     pub fn as_str(&self) -> &'static str {
         match self {
             LogLevel::Trace => "TRACE",
@@ -30,7 +37,7 @@ impl LogLevel {
 }
 
 // --- GLOBAL LOGGING STATE ---
-// We use AtomicU8 to store the current threshold so we can change it at runtime.
+/// The current global log level threshold.
 static GLOBAL_LOG_LEVEL: AtomicU8 = AtomicU8::new(LogLevel::Info as u8);
 
 /// Sets the global minimum log level.
@@ -39,6 +46,7 @@ pub fn set_level(level: LogLevel) {
     GLOBAL_LOG_LEVEL.store(level as u8, Ordering::SeqCst);
 }
 
+/// Retrieves the current global log level threshold.
 fn get_current_threshold() -> LogLevel {
     // Convert the stored u8 back into a LogLevel enum
     match GLOBAL_LOG_LEVEL.load(Ordering::SeqCst) {
@@ -52,6 +60,7 @@ fn get_current_threshold() -> LogLevel {
     }
 }
 
+/// Prints a log message to stdout if its level is greater than or equal to the current threshold.
 pub fn print_log(level: LogLevel, module: &str, args: Arguments<'_>) {
     // IMPORTANT: Check the level FIRST before doing any work (like get_timestamp)
     if level < get_current_threshold() {
@@ -72,6 +81,7 @@ pub fn print_log(level: LogLevel, module: &str, args: Arguments<'_>) {
     );
 }
 
+/// Logs a message at the `Trace` level.
 #[macro_export]
 macro_rules! trace {
     ($($arg:tt)+) => {
@@ -79,6 +89,7 @@ macro_rules! trace {
     };
 }
 
+/// Logs a message at the `Debug` level.
 #[macro_export]
 macro_rules! debug {
     ($($arg:tt)+) => {
@@ -86,6 +97,7 @@ macro_rules! debug {
     };
 }
 
+/// Logs a message at the `Info` level.
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)+) => {
@@ -93,6 +105,7 @@ macro_rules! info {
     };
 }
 
+/// Logs a message at the `Warn` level.
 #[macro_export]
 macro_rules! warn {
     ($($arg:tt)+) => {
@@ -100,12 +113,14 @@ macro_rules! warn {
     };
 }
 
+/// Logs a message at the `Error` level.
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)+) => {
         $crate::logger::print_log($crate::logger::LogLevel::Error, module_path!(), format_args!($($arg)+));
     };
 }
+
 
 #[cfg(test)]
 mod tests;
