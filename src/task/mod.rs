@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    core::connection::{ConnectionMetadata, ConnectionStreamClone},
+    server::connection::{ConnectionMetadata, ConnectionStreamClone},
     response::{ContentType, Response, Status},
 };
 

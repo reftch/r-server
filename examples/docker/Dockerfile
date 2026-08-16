@@ -1,15 +1,16 @@
-ARG ARTIFACT=html
+ARG ARTIFACT=client
+
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries
 FROM rust:1.96.1-alpine AS builder
 
 ARG ARTIFACT
-# ARG TARGETARCH=aarch64
-ARG TARGETARCH=x86_64
+ARG TARGETARCH=aarch64
+# ARG TARGETARCH=x86_64
 
 # Install musl-dev for static compilation
 # Also install build essentials needed by some crates
-RUN apk add --no-cache musl-dev pkgconfig openssl openssl-dev openssl-libs-static
+RUN apk add --no-cache musl-dev pkgconfig openssl openssl-dev openssl-libs-static ca-certificates
 
 WORKDIR /app
 
@@ -33,13 +34,17 @@ FROM scratch
 ARG ARTIFACT
 
 # Copy SSL certificates for HTTPS support
-# COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt \
+    /etc/ssl/certs/ca-certificates.crt
+
 # COPY --from=builder /app/cert.pem /cert.pem
 # COPY --from=builder /app/key.pem /key.pem
 
 # Copy the statically linked binary
 COPY --from=builder /application /application
-COPY --from=builder /app/examples/$ARTIFACT/assets /assets
+# COPY --from=builder /app/examples/$ARTIFACT/assets /assets
+
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Scratch images have no shell, so we use the exec form
 ENTRYPOINT ["/application"]

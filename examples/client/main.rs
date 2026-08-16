@@ -1,13 +1,19 @@
 use r_server::{
     client::Client,
-    core::http::Server,
     debug,
     response::{ContentType, Status::BadRequest},
     router::Method,
+    server::http::Server,
 };
 
 fn main() -> std::io::Result<()> {
     Server::new("0.0.0.0:8082")?
+        .route(Method::GET, "/api/v1/users/:id", move |req, res| {
+            if let Some(id) = req.param("id") {
+                res.content_type(ContentType::JSON)
+                    .body(format!("{{\"value\":{}}}", id));
+            }
+        })
         .route(Method::GET, "/api/v1/temperature", |req, res| {
             let latitude = match req.query("latitude") {
                 Some(v) => v,

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::http::Server;
+    use crate::server::http::Server;
     use crate::logger;
     use crate::logger::LogLevel;
     use crate::request::Request;

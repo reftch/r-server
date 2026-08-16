@@ -1,15 +1,10 @@
-use r_server::{core::http::Server, logger, response, router::Method, task};
+use r_server::{logger, response, router::Method, server::http::Server, task};
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-// fn api_handler(...) {
-//     res.content_type(response::ContentType::JSON)
-//         .body(format!("{{\"value\":{}}}", 1));
-// }
 
 fn main() -> std::io::Result<()> {
     r_server::logger::set_level(logger::LogLevel::Info);
@@ -21,7 +16,6 @@ fn main() -> std::io::Result<()> {
                     .body(format!("{{\"value\":{}}}", id));
             }
         })
-        // .route(Method::GET, "/api/v2/users/:id", http::to(api_handler))
         .route(Method::GET, "/stream", move |req, res| {
             task::repeat_every(
                 req.path,

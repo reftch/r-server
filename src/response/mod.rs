@@ -6,7 +6,7 @@ pub mod content_type;
 pub mod status;
 pub mod stream;
 
-use crate::core::connection::ConnectionMetadata;
+use crate::server::connection::ConnectionMetadata;
 use crate::response::builder::ResponseBuilder;
 use crate::response::stream::StreamWriter;
 

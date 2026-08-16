@@ -38,13 +38,13 @@ impl Client {
     }
 
     fn execute(&self, method: &str, path: &str, body: Option<String>) -> Result<String, String> {
-        // 1. Use the custom ReadWrite trait for the Box type
+        // Use the custom ReadWrite trait for the Box type
         let mut stream: Box<dyn ReadWrite> = if self.is_secure {
             let connector = openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
                 .map_err(|e| e.to_string())?
                 .build();
 
-            // 2. Fix: Use .as_str() to pass &str instead of &String to satisfy ToSocketAddrs
+            // Use .as_str() to pass &str instead of &String to satisfy ToSocketAddrs
             let tcp = std::net::TcpStream::connect((self.host.as_str(), self.port))
                 .map_err(|e| e.to_string())?;
 
@@ -55,14 +55,14 @@ impl Client {
             // This now works because ssl_stream implements Read + Write
             Box::new(ssl_stream)
         } else {
-            // 2. Fix: Again, use .as_str() here
+            // Again, use .as_str() here
             let tcp = std::net::TcpStream::connect((self.host.as_str(), self.port))
                 .map_err(|e| e.to_string())?;
 
             Box::new(tcp)
         };
 
-        // 3. Now write! will work because Write is in scope
+        // Now write! will work because Write is in scope
         write!(stream, "{} {} HTTP/1.1\r\n", method, path).map_err(|e| e.to_string())?;
         write!(stream, "Host: {}\r\n", self.host).map_err(|e| e.to_string())?;
         write!(stream, "Accept: application/json\r\n").map_err(|e| e.to_string())?;

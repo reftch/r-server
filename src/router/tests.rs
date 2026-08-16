@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::connection::ConnectionMetadata;
+use crate::server::connection::ConnectionMetadata;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use std::str::FromStr;
