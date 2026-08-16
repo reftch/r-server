@@ -166,11 +166,10 @@ impl<'a> Request<'a> {
 
     #[inline(always)]
     pub fn query(&self, name: &str) -> Option<&str> {
-        self.query_params.iter().find_map(
-            |(key, value)| {
-                if *key == name { Some(*value) } else { None }
-            },
-        )
+        self.query_params
+            .iter()
+            .find(|&&(k, _)| k == name)
+            .map(|&(_, v)| v)
     }
 
     #[inline(always)]

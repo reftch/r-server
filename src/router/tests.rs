@@ -78,6 +78,32 @@ fn test_route_with_query_params() {
 }
 
 #[test]
+fn test_route_query_params() {
+    let mut router: Router<()> = Router::new();
+    // Note: Keeping your spelling of 'longtitude' as per the input buffer
+    let buf = b"GET /api/v1/temperature?latitude=1.1&longtitude=2.2 HTTP/1.1\r\n\r\n";
+    let mut req_from_buf = Request::parse(buf).expect("Should parse");
+
+    router.add_route(Method::GET, "/api/v1/temperature", |req, res| {
+        let lat = req.query("latitude").unwrap_or("0");
+        let lon = req.query("longtitude").unwrap_or("0");
+        res.body = format!("Lat: {}, Lon: {}", lat, lon).into();
+    });
+
+    let handler = router
+        .route(&mut req_from_buf)
+        .expect("Route should be found");
+
+    let metadata = ConnectionMetadata { stream: () };
+    let mut res = Response::new(&metadata, Status::Ok, "", ContentType::TEXT);
+
+    handler(&mut req_from_buf, &mut res);
+
+    // Asserting that both parameters were correctly parsed and injected into the body
+    assert_eq!(res.body, "Lat: 1.1, Lon: 2.2".as_bytes());
+}
+
+#[test]
 fn test_different_methods() {
     let mut router: Router<()> = Router::new();
     router.add_route(Method::GET, "/path", hello_handler);
