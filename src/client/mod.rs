@@ -1,9 +1,11 @@
 use std::io::{Read, Write}; // Required for write! macro
 
-// 1. Define the combined trait to fix the compilation error
+/// A trait that combines `Read` and `Write` capabilities.
 pub trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
 
+/// A simple HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests.
+/// It supports both HTTP and HTTPS via SSL/TLS.
 pub struct Client {
     host: String,
     is_secure: bool,
@@ -11,6 +13,11 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a new `Client` instance. 
+    /// 
+    /// The `host` parameter can include a scheme like `http://` or `https://`.
+    /// If a scheme is provided, it is stripped, and the `is_secure` flag and 
+    /// appropriate port (443 for https, 80 for http) are set accordingly.
     pub fn new(host: impl Into<String>) -> Self {
         let host_str = host.into();
         let is_secure = host_str.starts_with("https://");
@@ -37,6 +44,10 @@ impl Client {
         }
     }
 
+    /// Executes an HTTP request with the given method, path, and optional body.
+    /// 
+    /// This method handles stream creation, request construction, and response reading,
+    /// including support for chunked transfer encoding.
     fn execute(&self, method: &str, path: &str, body: Option<String>) -> Result<String, String> {
         // Use the custom ReadWrite trait for the Box type
         let mut stream: Box<dyn ReadWrite> = if self.is_secure {
@@ -107,23 +118,33 @@ impl Client {
         String::from_utf8(final_body_bytes).map_err(|e| e.to_string())
     }
 
+    /// Sends a GET request to the specified path.
     pub fn get(&self, path: &str) -> Result<String, String> {
         self.execute("GET", path, None)
     }
+
+    /// Sends a POST request to the specified path with the given body.
     pub fn post(&self, path: &str, body: String) -> Result<String, String> {
         self.execute("POST", path, Some(body))
     }
+
+    /// Sends a PUT request to the specified path with the given body.
     pub fn put(&self, path: &str, body: String) -> Result<String, String> {
         self.execute("PUT", path, Some(body))
     }
+
+    /// Sends a PATCH request to the specified path with the given body.
     pub fn patch(&self, path: &str, body: String) -> Result<String, String> {
         self.execute("PATCH", path, Some(body))
     }
+
+    /// Sends a DELETE request to the specified path.
     pub fn delete(&self, path: &str) -> Result<String, String> {
         self.execute("DELETE", path, None)
     }
 }
 
+/// Decodes a body that has been encoded using chunked transfer encoding.
 pub fn decode_chunked(body: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut result = Vec::new();
     let mut pos = 0;
