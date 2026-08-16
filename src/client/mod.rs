@@ -1,13 +1,39 @@
 /// The main client used to interact with the REST API
 pub struct Client {
     host: String,
+    is_secure: bool,
 }
 
 impl Client {
-    /// Creates a new instance of the ApiClient.
-    /// This is the standard way to instantiate objects in Rust.
+    /// Creates a new instance of the Client.
+    /// It automatically detects if the host uses https.
     pub fn new(host: impl Into<String>) -> Self {
-        Self { host: host.into() }
+        let host_str = host.into();
+
+        // Check if the host starts with https://
+        let is_secure = host_str.starts_with("https://");
+
+        // Optional: Strip the protocol from the host string so
+        // the stored host is just the domain/ip (e.g., "google.com" instead of "https://google.com")
+        // This makes path concatenation easier later.
+        let cleaned_host = if is_secure {
+            host_str
+                .strip_prefix("https://")
+                .unwrap_or(&host_str)
+                .to_string()
+        } else if host_str.starts_with("http://") {
+            host_str
+                .strip_prefix("http://")
+                .unwrap_or(&host_str)
+                .to_string()
+        } else {
+            host_str
+        };
+
+        Self {
+            host: cleaned_host,
+            is_secure,
+        }
     }
 
     pub async fn get(&self, path: &str) -> Result<String, String> {

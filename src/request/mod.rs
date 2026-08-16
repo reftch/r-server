@@ -148,20 +148,18 @@ impl<'a> Request<'a> {
 
     #[inline(always)]
     pub fn param(&self, name: &str) -> Option<&str> {
-        self.params.iter().find_map(
-            |(key, value)| {
-                if *key == name { Some(*value) } else { None }
-            },
-        )
+        self.params
+            .iter()
+            .find(|&&(k, _)| k == name)
+            .map(|&(_, v)| v)
     }
 
     #[inline(always)]
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find_map(
-            |(key, value)| {
-                if *key == name { Some(*value) } else { None }
-            },
-        )
+        self.headers
+            .iter()
+            .find(|&&(k, _)| k == name)
+            .map(|&(_, v)| v)
     }
 
     #[inline(always)]
