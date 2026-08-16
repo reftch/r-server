@@ -1,16 +1,24 @@
 use memchr::memchr;
 
+/// Represents an HTTP request.
 pub struct Request<'a> {
+    /// The HTTP method (e.g., "GET", "POST").
     pub method: &'a str,
+    /// The request path.
     pub path: &'a str,
+    /// The HTTP version (e.g., "HTTP/1.1").
     pub version: &'a str,
 
+    /// A list of request headers as key-value pairs.
     pub headers: Vec<(&'a str, &'a str)>,
+    /// A list of parameters (not explicitly parsed from the body in this implementation).
     pub params: Vec<(&'a str, &'a str)>,
+    /// A list of query parameters from the URL.
     pub query_params: Vec<(&'a str, &'a str)>,
 }
 
 impl<'a> Request<'a> {
+    /// Finds the end of the request headers by looking for the double CRLF.
     #[inline(always)]
     fn find_header_end(buf: &[u8]) -> Option<usize> {
         let mut i = 0;
@@ -28,6 +36,7 @@ impl<'a> Request<'a> {
         None
     }
 
+    /// Parses an HTTP request from a byte buffer.
     #[inline(always)]
     pub fn parse(buf: &'a [u8]) -> Option<Self> {
         let header_end = Self::find_header_end(buf)?;
@@ -80,6 +89,7 @@ impl<'a> Request<'a> {
         })
     }
 
+    /// Parses the path and query parameters from a full path string.
     #[inline(always)]
     fn parse_path_and_query(full_path: &str) -> (&str, Vec<(&str, &str)>) {
         let Some(qpos) = memchr(b'?', full_path.as_bytes()) else {
@@ -110,6 +120,7 @@ impl<'a> Request<'a> {
         (path, params)
     }
 
+    /// Parses headers from the provided lines.
     #[inline(always)]
     fn parse_headers<'b>(lines: &mut std::str::Split<'b, &str>) -> Vec<(&'b str, &'b str)> {
         let mut headers = Vec::with_capacity(12);
@@ -146,6 +157,7 @@ impl<'a> Request<'a> {
         headers
     }
 
+    /// Gets a parameter by name.
     #[inline(always)]
     pub fn param(&self, name: &str) -> Option<&str> {
         self.params
@@ -154,6 +166,7 @@ impl<'a> Request<'a> {
             .map(|&(_, v)| v)
     }
 
+    /// Gets a header by name.
     #[inline(always)]
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
@@ -162,6 +175,7 @@ impl<'a> Request<'a> {
             .map(|&(_, v)| v)
     }
 
+    /// Gets a query parameter by name.
     #[inline(always)]
     pub fn query(&self, name: &str) -> Option<&str> {
         self.query_params
@@ -170,6 +184,7 @@ impl<'a> Request<'a> {
             .map(|&(_, v)| v)
     }
 
+    /// Gets the Content-Type header.
     #[inline(always)]
     pub fn mime_type(&self) -> Option<&str> {
         self.header("Content-Type")

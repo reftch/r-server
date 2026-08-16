@@ -1,12 +1,13 @@
+/// Represents an HTTP status code.
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Status {
-    // Information responses
+    /// Information responses
     Continue = 100,
     SwitchingProtocols = 101,
     Processing = 102,
     EarlyHints = 103,
 
-    // Successful responses
+    /// Successful responses
     Ok = 200,
     Created = 201,
     Accepted = 202,
@@ -17,7 +18,7 @@ pub enum Status {
     MultiStatus = 207,
     AlreadyReported = 208,
 
-    // Redirection messages
+    /// Redirection messages
     MultipleChoices = 300,
     MovedPermanently = 301,
     MovedTemporarily = 302,
@@ -27,7 +28,7 @@ pub enum Status {
     TemporaryRedirect = 307,
     PermanentRedirect = 308,
 
-    // Client error responses
+    /// Client error responses
     BadRequest = 400,
     Unauthorized = 401,
     Forbidden = 403,
@@ -70,10 +71,12 @@ pub enum Status {
 }
 
 impl Status {
+    /// Returns the status code as a u16.
     pub fn as_u16(&self) -> u16 {
         *self as u16
     }
 
+    /// Returns the HTTP reason phrase associated with the status code.
     pub fn reason_phrase(&self) -> &'static str {
         match self {
             Status::Continue => "Continue",
