@@ -1,4 +1,4 @@
-ARG ARTIFACT=client
+ARG ARTIFACT=weather
 
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries
@@ -42,7 +42,7 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt \
 
 # Copy the statically linked binary
 COPY --from=builder /application /application
-# COPY --from=builder /app/examples/$ARTIFACT/assets /assets
+COPY --from=builder /app/examples/$ARTIFACT/assets /assets
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 

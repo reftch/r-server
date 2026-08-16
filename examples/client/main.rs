@@ -8,17 +8,53 @@ use r_server::{
 
 fn main() -> std::io::Result<()> {
     Server::new("0.0.0.0:8082")?
-        .route(Method::GET, "/api/v1/users/:id", move |req, res| {
-            if let Some(id) = req.param("id") {
-                res.content_type(ContentType::JSON)
-                    .body(format!("{{\"value\":{}}}", id));
-            }
+        .route(Method::GET, "/api/v1/cities", move |req, res| {
+            let keyword = match req.query("keyword") {
+                Some(v) => v,
+                None => {
+                    res.status(BadRequest).body("Missing keyword");
+                    return;
+                }
+            };
+
+            debug!("Keyword: {}", keyword);
+
+            let client = Client::new("https://photon.komoot.io");
+            let path = format!("/api/?q={}", keyword);
+
+            let body = client.get(&path).unwrap();
+            res.content_type(ContentType::JSON).body(body);
         })
-        .route(Method::GET, "/api/v1/temperature", |req, res| {
-            let latitude = match req.query("latitude") {
+        .route(Method::GET, "/api/v1/reverse", move |req, res| {
+            let latitude = match req.query("lat") {
                 Some(v) => v,
                 None => {
                     res.status(BadRequest).body("Missing latitude");
+                    return;
+                }
+            };
+
+            let longtitude = match req.query("lon") {
+                Some(v) => v,
+                None => {
+                    res.status(BadRequest).body("Missing longtitude");
+                    return;
+                }
+            };
+
+            debug!("Latitude: {}, Longtitude: {}", latitude, longtitude);
+
+            let client = Client::new("https://photon.komoot.io");
+            let path = format!("/reverse?lat={}&lon={}", latitude, longtitude);
+
+            let body = client.get(&path).unwrap();
+            res.content_type(ContentType::JSON).body(body);
+        })
+        .route(Method::GET, "/api/v1/temperature", |req, res| {
+            let latitude = match req.query("latidude") {
+                Some(v) => v,
+                None => {
+                    res.status(BadRequest).body("Missing latidude");
                     return;
                 }
             };
@@ -34,12 +70,19 @@ fn main() -> std::io::Result<()> {
             debug!("Latitude: {}, Longtitude: {}", latitude, longtitude);
 
             let client = Client::new("https://api.open-meteo.com");
-            let path =
-                "/v1/forecast?latitude=48.78&longitude=9.18&current=temperature_2m,wind_speed_10m";
+            let path = format!(
+                    "/v1/forecast?latitude={}&longitude={}\
+                    &current=temperature_2m&current=weather_code&current=wind_speed_10m&current=cloud_cover\
+                    &hourly=temperature_2m,precipitation_probability,wind_speed_10m,cloud_cover\
+                    &daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code,precipitation_sum,wind_speed_10m_max\
+                    &forecast_days=10&timezone=auto",
+                    latitude, longtitude
+                );
 
-            let body = client.get(path).unwrap();
+            let body = client.get(&path).unwrap();
             res.content_type(ContentType::JSON).body(body);
         })
+        // .assets_path("./examples/weather/assets")
         .run()?;
 
     Ok(())
