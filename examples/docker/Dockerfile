@@ -1,4 +1,4 @@
-ARG ARTIFACT=weather
+ARG ARTIFACT=html
 
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries

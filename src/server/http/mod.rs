@@ -6,10 +6,10 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Router;
+use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
 
@@ -56,16 +56,61 @@ pub struct Server {
     listener: TcpListener,
     router: Arc<Router<TcpStream>>,
     assets_path: PathBuf,
+    addr: String,
 }
 
 impl Server {
-    pub fn new(addr: &str) -> io::Result<Self> {
-        Self::new_with_assets(addr, PathBuf::from("./assets"))
+    pub fn new() -> io::Result<Self> {
+        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let port: u16 = std::env::var("PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(8080);
+
+        let addr = format!("{}:{}", host, port);
+        // Pass &addr because new_with_assets expects &str
+        Self::new_with_assets(&addr, PathBuf::from("./assets"))
+    }
+
+    // We must update the listener, not just the string!
+    pub fn bind(&mut self, host: &str, port: u16) -> io::Result<&mut Self> {
+        let addr = format!("{}:{}", host, port);
+        let socket_addr = format!("{}:{}", host, port)
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        // Re-bind the actual listener
+        self.listener = TcpListener::bind(socket_addr)?;
+        self.addr = addr;
+        Ok(self)
     }
 
     pub fn assets_path(&mut self, path: &str) -> &mut Self {
         self.assets_path = PathBuf::from(path);
         self
+    }
+
+    fn new_with_assets(addr: &str, assets_path: PathBuf) -> io::Result<Self> {
+        let init_start = Instant::now();
+        let router = Arc::new(Router::new());
+
+        // Parse the addr string into a SocketAddr for the listener
+        let socket_addr = addr
+            .parse::<std::net::SocketAddr>()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        Ok(Server {
+            init_start,
+            listener: TcpListener::bind(socket_addr)?,
+            router,
+            assets_path,
+            addr: addr.to_string(),
+        })
+    }
+
+    /// Run polling
+    pub fn run(&mut self) -> io::Result<()> {
+        self.run_loop()
     }
 
     pub fn route(
@@ -79,22 +124,6 @@ impl Server {
             router.add_route(method, path, handler);
         }
         self
-    }
-
-    /// Run polling
-    pub fn run(&mut self) -> io::Result<()> {
-        self.run_loop()
-    }
-
-    fn new_with_assets(addr: &str, assets_path: PathBuf) -> io::Result<Self> {
-        let init_start = Instant::now();
-        let router = Arc::new(Router::new());
-        Ok(Server {
-            init_start,
-            listener: TcpListener::bind(addr.parse::<std::net::SocketAddr>().unwrap())?,
-            router,
-            assets_path,
-        })
     }
 
     fn would_block(err: &io::Error) -> bool {

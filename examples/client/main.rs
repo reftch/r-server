@@ -7,7 +7,7 @@ use r_server::{
 };
 
 fn main() -> std::io::Result<()> {
-    Server::new("0.0.0.0:8082")?
+    Server::new()?
         .route(Method::GET, "/api/v1/cities", move |req, res| {
             let keyword = match req.query("keyword") {
                 Some(v) => v,
@@ -82,7 +82,6 @@ fn main() -> std::io::Result<()> {
             let body = client.get(&path).unwrap();
             res.content_type(ContentType::JSON).body(body);
         })
-        // .assets_path("./examples/weather/assets")
         .run()?;
 
     Ok(())

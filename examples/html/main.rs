@@ -9,7 +9,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 fn main() -> std::io::Result<()> {
     r_server::logger::set_level(logger::LogLevel::Info);
 
-    Server::new("0.0.0.0:8082")?
+    Server::new()?
         .route(Method::GET, "/api/v1/users/:id", move |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)

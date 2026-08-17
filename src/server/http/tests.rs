@@ -1,16 +1,19 @@
 #[cfg(test)]
 mod tests {
-    use crate::server::http::Server;
     use crate::logger;
     use crate::logger::LogLevel;
     use crate::request::Request;
     use crate::response::Response;
-    use crate::router::{Method, Router};
+    use crate::router::Method;
+    use crate::server::http::Server;
 
     use std::io::{Read, Write};
     use std::net::TcpStream;
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn hello_handler(_req: &Request, res: &mut Response<TcpStream>) {
         res.body("Hello, World!");
@@ -18,10 +21,12 @@ mod tests {
 
     #[test]
     fn test_server_connection() -> Result<(), Box<dyn std::error::Error>> {
+        let _guard = TEST_LOCK.lock().unwrap();
         logger::set_level(LogLevel::None);
 
         // Use port 0 to let the OS assign a free port
-        let mut server = Server::new("127.0.0.1:0")?;
+        let mut server = Server::new()?;
+        server.bind("127.0.0.1", 0)?;
         server.route(Method::GET, "/", hello_handler);
 
         let addr = server.listener.local_addr().unwrap();
@@ -32,7 +37,7 @@ mod tests {
         });
 
         // Wait a bit for the server to start and bind
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(200));
 
         let mut stream = TcpStream::connect(addr).unwrap();
         stream
@@ -72,19 +77,19 @@ mod tests {
 
     #[test]
     fn test_server_404() {
+        let _guard = TEST_LOCK.lock().unwrap();
         logger::set_level(LogLevel::None);
 
-        let mut router = Router::new();
-        router.add_route(Method::GET, "/", hello_handler);
-
-        let mut server = Server::new("127.0.0.1:0").unwrap();
+        let mut server = Server::new().unwrap();
+        server.bind("127.0.0.1", 0).unwrap();
+        server.route(Method::GET, "/", hello_handler);
         let addr = server.listener.local_addr().unwrap();
 
         thread::spawn(move || {
             let _ = server.run();
         });
 
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(200));
 
         let mut stream = TcpStream::connect(addr).unwrap();
         stream

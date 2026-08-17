@@ -14,26 +14,32 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 The project is organized into several core crates:
 
 ### `request`
+
 Handles parsing and representation of incoming HTTP requests from raw byte buffers into structured data including methods, headers, query parameters, and path parameters.
 
 ### `response`
+
 Manages the construction of HTTP responses. It provides an expressive Builder-style interface for setting status codes, body content, MIME types, and custom headers compliant with HTTP/1.1.
 
 ### `router`
+
 Implements a high-performance Trie-based router that supports both static paths and dynamic parameters (e.g., `/users/:id`). It efficiently matches requests to handlers in $O(path\_length)$ time regardless of the number of routes.
 
 ### `server`
+
 The core engine managing TCP listeners, non-blocking I/O via system polling, and orchestrating the request-response lifecycle.
 
 ### `sslserver`
+
 A wrapper around the server logic providing HTTPS support by handling TLS handshakes and certificate management via OpenSSL.
 
 ### `logger`
+
 A thread-safe, asynchronous logging system. Messages are processed on a background worker thread to ensure that I/O operations for logging do not block the main request processing loop.
 
 ### `utils`
-Provides shared utility functions such as environment variable parsing with default fallbacks.
 
+Provides shared utility functions such as environment variable parsing with default fallbacks.
 
 ## Usage Example
 
@@ -91,17 +97,16 @@ To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore
 curl -k https://localhost:8443/api/v1/inc/100
 ```
 
-
 ## API Reference Summary
 
 ### `Server`
 
-| Method | Description |
-|--------|-------------|
+| Method                              | Description                                                   |
+| ----------------------------------- | ------------------------------------------------------------- |
 | `new(addr: &str) -> IoResult<Self>` | Creates a new server instance listening on the given address. |
-| `assets_path(path: &str)` | Sets the directory for serving static files. |
-| `route(method, path, handler)` | Registers a new route with a specific HTTP method and path. |
-| `run() -> IoResult<()>` | Starts the asynchronous event loop. |
+| `assets_path(path: &str)`           | Sets the directory for serving static files.                  |
+| `route(method, path, handler)`      | Registers a new route with a specific HTTP method and path.   |
+| `run() -> IoResult<()>`             | Starts the asynchronous event loop.                           |
 
 ### `Response` (Builder Pattern)
 
@@ -133,11 +138,13 @@ cargo build
 ## How to run example with Docker
 
 Run application
+
 ```
 docker compose -f examples/docker/compose.yml up -d --build
 ```
 
 Stop application
+
 ```
-docker compose -f docker/compose.yml down  
+docker compose -f docker/compose.yml down
 ```
