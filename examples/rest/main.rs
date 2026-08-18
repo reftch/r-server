@@ -1,7 +1,17 @@
-use r_server::{response, router::Method, server::http::Server};
+use r_server::{
+    request::Request,
+    response::{self, Response},
+    router::Method,
+    server::https::Server,
+};
+
+fn hello_handler(_req: &Request, res: &mut Response) {
+    res.body("Hello, World!");
+}
 
 fn main() -> std::io::Result<()> {
     Server::new()?
+        .route(Method::GET, "/hello", hello_handler)
         .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)

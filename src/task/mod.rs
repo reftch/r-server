@@ -9,34 +9,33 @@ use std::{
 };
 
 use crate::{
-    server::connection::{ConnectionMetadata, ConnectionStreamClone},
     response::{ContentType, Response, Status},
+    server::connection::Metadata,
 };
 
 type Cancel = Arc<AtomicBool>;
 
 static TASKS: OnceLock<Mutex<HashMap<String, Cancel>>> = OnceLock::new();
 
-pub fn repeat_every<M, F>(key: &str, conn: ConnectionMetadata<M>, delay: Duration, mut f: F)
+pub fn repeat_every<F>(key: impl Into<String>, metadata: &dyn Metadata, delay: Duration, mut f: F)
 where
-    M: ConnectionStreamClone + Send + 'static,
-    F: FnMut(&Response<'_, M>) + Send + 'static,
+    F: for<'a> FnMut(&Response<'a>) + Send + 'static,
 {
+    let conn = metadata
+        .try_clone_metadata()
+        .expect("failed to clone connection metadata");
     let tasks = TASKS.get_or_init(|| Mutex::new(HashMap::new()));
 
+    let key = key.into();
     let cancel = Arc::new(AtomicBool::new(false));
 
-    if let Some(old_cancel) = tasks
-        .lock()
-        .unwrap()
-        .insert(key.to_string(), cancel.clone())
-    {
+    if let Some(old_cancel) = tasks.lock().unwrap().insert(key, cancel.clone()) {
         old_cancel.store(true, Ordering::Relaxed);
     }
 
     thread::spawn(move || {
         while !cancel.load(Ordering::Relaxed) {
-            let response = Response::new(&conn, Status::Ok, b"", ContentType::SSE);
+            let response = Response::new(conn.as_ref(), Status::Ok, b"", ContentType::SSE);
 
             f(&response);
 
@@ -45,13 +44,13 @@ where
     });
 }
 
-pub fn once<M, F>(conn: ConnectionMetadata<M>, mut f: F)
+pub fn once<F>(conn: Box<dyn Metadata>, mut f: F)
 where
-    M: ConnectionStreamClone + Send + 'static,
-    F: FnMut(&mut Response<'_, M>) + Send + 'static,
+    F: for<'a> FnMut(&mut Response<'a>) + Send + 'static,
 {
     thread::spawn(move || {
-        let mut response = Response::new(&conn, Status::Ok, b"", ContentType::TEXT);
+        let mut response = Response::new(conn.as_ref(), Status::Ok, b"", ContentType::TEXT);
+
         f(&mut response);
     });
 }

@@ -16,12 +16,12 @@ fn main() -> std::io::Result<()> {
                     .body(format!("{{\"value\":{}}}", id));
             }
         })
-        .route(Method::GET, "/stream", move |req, res| {
+        .route(Method::GET, "/stream", |req, res| {
             task::repeat_every(
-                req.path,
-                res.metadata.try_clone().unwrap(),
+                req.path.to_owned(),
+                res.metadata,
                 Duration::from_millis(50),
-                move |res| {
+                |res| {
                     let _ = res.stream(&format!(
                         "{}\n\n",
                         COUNTER.fetch_add(1, Ordering::Relaxed) + 1

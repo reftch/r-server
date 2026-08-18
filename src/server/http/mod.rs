@@ -54,7 +54,7 @@ enum WriteState {
 pub struct Server {
     init_start: Instant,
     listener: TcpListener,
-    router: Arc<Router<TcpStream>>,
+    router: Arc<Router>,
     assets_path: PathBuf,
     addr: String,
 }
@@ -117,7 +117,7 @@ impl Server {
         &mut self,
         method: crate::router::Method,
         path: &str,
-        handler: crate::router::HandlerFn<TcpStream>,
+        handler: crate::router::HandlerFn,
     ) -> &mut Self {
         if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
             trace!("Successfully added route: {} {}", method.index(), path);
@@ -172,7 +172,7 @@ impl Server {
 
     fn handle_read(
         conn: &mut Connection<TcpStream>,
-        router: &Router<TcpStream>,
+        router: &Router,
         assets_path: &Path,
     ) -> io::Result<bool> {
         let mut buf = [0; 1024];

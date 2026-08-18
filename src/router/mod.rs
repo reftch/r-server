@@ -5,23 +5,23 @@ use std::collections::HashMap;
 pub mod method;
 pub use self::method::{InvalidMethod, Method};
 
-pub type HandlerResponse<'a, T> = Response<'a, T>;
-pub type HandlerFn<T> = fn(&Request, &mut Response<T>);
+pub type HandlerResponse<'a> = Response<'a>;
+pub type HandlerFn = for<'a> fn(&Request<'a>, &mut Response<'a>);
 
 const METHOD_COUNT: usize = 7;
 
-struct ParamChild<T> {
+struct ParamChild {
     name: Box<str>,
-    node: Box<TrieNode<T>>,
+    node: Box<TrieNode>,
 }
 
-struct TrieNode<T> {
-    children: HashMap<Box<str>, Box<TrieNode<T>>>,
-    param_child: Option<ParamChild<T>>,
-    handlers: [Option<HandlerFn<T>>; METHOD_COUNT],
+struct TrieNode {
+    children: HashMap<Box<str>, Box<TrieNode>>,
+    param_child: Option<ParamChild>,
+    handlers: [Option<HandlerFn>; METHOD_COUNT],
 }
 
-impl<T> TrieNode<T> {
+impl TrieNode {
     fn new() -> Self {
         Self {
             children: HashMap::new(),
@@ -31,24 +31,24 @@ impl<T> TrieNode<T> {
     }
 }
 
-pub struct Router<T> {
-    root: TrieNode<T>,
+pub struct Router {
+    root: TrieNode,
 }
 
-impl<T> Default for Router<T> {
+impl Default for Router {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> Router<T> {
+impl Router {
     pub fn new() -> Self {
         Self {
             root: TrieNode::new(),
         }
     }
 
-    pub fn add_route(&mut self, method: Method, path: &str, handler: HandlerFn<T>) {
+    pub fn add_route(&mut self, method: Method, path: &str, handler: HandlerFn) {
         let mut current = &mut self.root;
 
         for part in path.split('/').filter(|s| !s.is_empty()) {
@@ -72,7 +72,7 @@ impl<T> Router<T> {
     }
 
     #[inline]
-    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<HandlerFn<T>> {
+    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<HandlerFn> {
         let mut current = &self.root;
 
         let path = request
@@ -91,13 +91,16 @@ impl<T> Router<T> {
                 }
                 None => {
                     let param = current.param_child.as_ref()?;
+
                     request.params.push((param.name.as_ref(), part));
+
                     current = &param.node;
                 }
             }
         }
 
         let method: Method = request.method.parse().expect("Failed to parse");
+
         current.handlers[method.index()]
     }
 }

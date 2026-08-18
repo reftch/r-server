@@ -1,15 +1,14 @@
 use crate::response::Response;
 
-pub struct ResponseBuilder<'a, T> {
-    response: Response<'a, T>,
+pub struct ResponseBuilder<'a> {
+    response: Response<'a>,
 }
 
-impl<'a, T> ResponseBuilder<'a, T> {
-    pub fn new(response: Response<'a, T>) -> Self {
+impl<'a> ResponseBuilder<'a> {
+    pub fn new(response: Response<'a>) -> Self {
         Self { response }
     }
 
-    /// This contains the logic previously in to_bytes()
     pub fn build(self) -> Vec<u8> {
         let mut line = format!(
             "HTTP/1.1 {} {}\r\n",
@@ -31,10 +30,13 @@ impl<'a, T> ResponseBuilder<'a, T> {
             line.push_str(&format!("{}: {}\r\n", key, value));
         }
 
+        // End headers
         line.push_str("\r\n");
 
+        // Build complete response
         let mut full_response = line.into_bytes();
-        full_response.extend(&self.response.body);
+        full_response.extend_from_slice(&self.response.body);
+
         full_response
     }
 }

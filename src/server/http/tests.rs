@@ -15,7 +15,7 @@ mod tests {
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    fn hello_handler(_req: &Request, res: &mut Response<TcpStream>) {
+    fn hello_handler(_req: &Request, res: &mut Response) {
         res.body("Hello, World!");
     }
 

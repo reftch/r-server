@@ -6,22 +6,21 @@ pub mod content_type;
 pub mod status;
 pub mod stream;
 
-use crate::server::connection::ConnectionMetadata;
 use crate::response::builder::ResponseBuilder;
-use crate::response::stream::StreamWriter;
+use crate::server::connection::Metadata;
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
-pub struct Response<'a, T> {
+pub struct Response<'a> {
     pub status: Status,
     pub body: Vec<u8>,
     pub content_type: ContentType,
     pub headers: HashMap<String, String>,
-    pub metadata: &'a ConnectionMetadata<T>,
+    pub metadata: &'a dyn Metadata,
 }
 
-impl<'a, T> fmt::Debug for Response<'a, T> {
+impl<'a> fmt::Debug for Response<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Response")
             .field("status", &self.status)
@@ -33,7 +32,7 @@ impl<'a, T> fmt::Debug for Response<'a, T> {
     }
 }
 
-impl<'a, T> Clone for Response<'a, T> {
+impl<'a> Clone for Response<'a> {
     fn clone(&self) -> Self {
         Self {
             status: self.status,
@@ -45,9 +44,9 @@ impl<'a, T> Clone for Response<'a, T> {
     }
 }
 
-impl<'a, T> Response<'a, T> {
+impl<'a> Response<'a> {
     pub fn new(
-        metadata: &'a ConnectionMetadata<T>,
+        metadata: &'a dyn Metadata,
         status: Status,
         body: impl Into<Vec<u8>>,
         content_type: ContentType,
@@ -71,6 +70,7 @@ impl<'a, T> Response<'a, T> {
         V: Into<String>,
     {
         self.headers.entry(key.into()).or_insert(value.into());
+
         self
     }
 
@@ -88,33 +88,27 @@ impl<'a, T> Response<'a, T> {
         self.content_type = content_type;
         self
     }
-}
 
-impl<'a, T> Response<'a, T>
-where
-    T: StreamWriter,
-{
     pub fn stream(&self, data: &str) -> io::Result<()> {
         let payload = format!("data: {}\n\n", data);
 
-        // Define the headers and status line
         let response = format!(
             "HTTP/1.1 200 OK\r\n\
-               Content-Type: text/event-stream\r\n\
-               Cache-Control: no-cache\r\n\
-               Connection: keep-alive\r\n\
-               \r\n\
-               {}\n\n",
+             Content-Type: text/event-stream\r\n\
+             Cache-Control: no-cache\r\n\
+             Connection: keep-alive\r\n\
+             \r\n\
+             {}\n\n",
             payload
         );
 
-        // Write the response to the stream
-        self.metadata.stream.write(response.as_bytes())
+        self.metadata.write(response.as_bytes())
     }
 
     pub fn flush(&self) -> io::Result<()> {
         let response = self.clone().build();
-        self.metadata.stream.write(&response)
+        // write stream
+        self.metadata.write(&response)
     }
 }
 
