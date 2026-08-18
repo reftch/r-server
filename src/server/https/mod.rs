@@ -353,9 +353,7 @@ impl Server {
                 match mid.handshake() {
                     Ok(stream) => {
                         debug!("TLS handshake completed successfully.");
-
                         *state = Some(TlsState::Connected(stream));
-
                         Ok(true)
                     }
 
@@ -367,10 +365,8 @@ impl Server {
 
                     Err(e) => {
                         trace!("TLS handshake failed: {:?}", e);
-
                         // Don't put a failed TLS state back.
                         *state = None;
-
                         Err(io::Error::other(format!("{:?}", e)))
                     }
                 }
