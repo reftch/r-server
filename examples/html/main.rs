@@ -10,7 +10,7 @@ fn main() -> std::io::Result<()> {
     r_server::logger::set_level(logger::LogLevel::Info);
 
     Server::new()?
-        .route(Method::GET, "/api/v1/users/:id", move |req, res| {
+        .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)
                     .body(format!("{{\"value\":{}}}", id));

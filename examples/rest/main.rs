@@ -2,7 +2,7 @@ use r_server::{
     request::Request,
     response::{self, Response},
     router::Method,
-    server::https::Server,
+    server::http::Server,
 };
 
 fn hello_handler(_req: &Request, res: &mut Response) {

@@ -8,7 +8,7 @@ use r_server::{
 
 fn main() -> std::io::Result<()> {
     Server::new()?
-        .route(Method::GET, "/api/v1/cities", move |req, res| {
+        .route(Method::GET, "/api/v1/cities", |req, res| {
             let keyword = match req.query("keyword") {
                 Some(v) => v,
                 None => {
@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
             let body = client.get(&path).unwrap();
             res.content_type(ContentType::JSON).body(body);
         })
-        .route(Method::GET, "/api/v1/reverse", move |req, res| {
+        .route(Method::GET, "/api/v1/reverse", |req, res| {
             let latitude = match req.query("lat") {
                 Some(v) => v,
                 None => {
