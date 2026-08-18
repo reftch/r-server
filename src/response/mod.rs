@@ -7,7 +7,7 @@ pub mod status;
 pub mod stream;
 
 use crate::response::builder::ResponseBuilder;
-use crate::server::connection::Metadata;
+use crate::server::metadata::Metadata;
 
 pub use self::content_type::ContentType;
 pub use self::status::Status;
