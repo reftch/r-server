@@ -29,6 +29,31 @@ Implements a high-performance Trie-based router that supports both static paths 
 
 The core engine managing TCP listeners, non-blocking I/O via system polling, and orchestrating the request-response lifecycle.
 
+### `client`
+
+A simple HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests. It supports both HTTP and HTTPS via SSL/TLS.
+
+#### Usage Example
+
+```rust
+use r_server::client::Client;
+
+fn main() -> std::io::Result<()> {
+    let client = Client::new("https://api.example.com");
+    
+    // GET request
+    let body = client.get("/api/v1/resource").unwrap();
+    println!("Response: {}", body);
+
+    // POST request
+    let post_body = r#"{"key": "value"}"#.to_string();
+    let post_response = client.post("/api/v1/resource", post_body).unwrap();
+    println!("POST Response: {}", post_response);
+
+    Ok(())
+}
+```
+
 ### `sslserver`
 
 A wrapper around the server logic providing HTTPS support by handling TLS handshakes and certificate management via OpenSSL.
