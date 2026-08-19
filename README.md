@@ -132,14 +132,72 @@ To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore
 curl -k https://localhost:8443/api/v1/inc/100
 ```
 
+### `bind(...)`
+
+Both the HTTP (`server::Server`) and HTTPS (`sslserver::Server`) servers expose an identical `bind(host, port)`
+method. It re-binds the underlying `TcpListener` to the supplied `host` and `port` and returns a `&mut Self`, so it can be chained before `run()`.
+
+By default, when no `bind` call is made, the servers use the `HOST`/`PORT` environment variables, falling back to:
+
+- **HTTP** (`server::Server`): `0.0.0.0:8080`
+- **HTTPS** (`sslserver::Server`): `0.0.0.0:8443`
+
+Calling `bind` overrides this default address.
+
+```rust
+use r_server::{response, router::Method, server::Server};
+use std::io;
+
+fn main() -> io::Result<()> {
+    let mut server = Server::new()?;
+
+    // Override the listening address instead of the default (0.0.0.0:8080 for HTTP).
+    server.bind("127.0.0.1", 3000)?;
+
+    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
+        if let Some(id) = req.param("id") {
+            res.content_type(response::ContentType::JSON)
+                 .body(format!("{{\"value\":{}}}", id));
+         }
+     });
+
+    server.run()?;
+    Ok(())
+}
+```
+
+For HTTPS the call is identical — only the import changes — and it overrides the `0.0.0.0:8443` default:
+
+```rust
+use r_server::{response, router::Method, sslserver::Server};
+use std::io;
+
+fn main() -> std::io::Result<()> {
+    let mut server = Server::new()?;
+
+    server.bind("127.0.0.1", 8443)?;
+
+    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
+        if let Some(id) = req.param("id") {
+            res.content_type(response::ContentType::JSON)
+                 .body(format!("{{\"value\":{}}}", id));
+         }
+     });
+
+    server.run()?;
+    Ok(())
+}
+```
+
 ## API Reference Summary
 
 ### `Server`
 
 | Method                              | Description                                                   |
 | ----------------------------------- | ------------------------------------------------------------- |
-| `new(addr: &str) -> IoResult<Self>` | Creates a new server instance listening on the given address. |
-| `assets_path(path: &str)`           | Sets the directory for serving static files.                  |
+| `new() -> IoResult<Self>` | Creates a new server instance. Reads `HOST`/`PORT` env vars, defaulting to `0.0.0.0:8080` for the HTTP server and `0.0.0.0:8443` for the HTTPS server. |
+| `bind(host: &str, port: u16)`         | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction. |
+| `assets_path(path: &str)`            | Sets the directory for serving static files.                   |
 | `route(method, path, handler)`      | Registers a new route with a specific HTTP method and path.   |
 | `run() -> IoResult<()>`             | Starts the asynchronous event loop.                           |
 
