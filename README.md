@@ -40,7 +40,7 @@ use r_server::client::Client;
 
 fn main() -> std::io::Result<()> {
     let client = Client::new("https://api.example.com");
-    
+
     // GET request
     let body = client.get("/api/v1/resource").unwrap();
     println!("Response: {}", body);
@@ -74,17 +74,19 @@ Here is a comprehensive example demonstrating how to initialize the server, conf
 
 ```rust
 use r_server::{response, router::Method, server::Server};
+use std::io;
 
-fn main() -> std::io::Result<()> {
-    HttpServer::new("0.0.0.0:8080")?
-        .route(Method::GET, "/api/v1/users/:id", |req, res| {
-            if let Some(id) = req.param("id") {
-                res.content_type(response::ContentType::JSON)
-                    .body(format!("{{\"value\":{}}}", id));
-            }
-        })
-        .run()?;
+fn main() -> io::Result<()> {
+    let mut server = Server::new()?;
 
+    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
+        if let Some(id) = req.param("id") {
+            res.content_type(response::ContentType::JSON)
+                .body(format!("{{\"value\":{}}}", id));
+        }
+    });
+
+    server.run()?;
     Ok(())
 }
 ```
@@ -101,19 +103,27 @@ The usage pattern is nearly identical, but you use the `sslserver::Server` inste
 
 ```rust
 use r_server::{response, router::Method, sslserver::Server};
+use std::io;
 
 fn main() -> std::io::Result<()> {
-    HttpsServer::new("0.0.0.0:8443")?
-        .route(Method::GET, "/api/v1/users/:id", |req, res| {
-            if let Some(id) = req.param("id") {
-                res.content_type(response::ContentType::JSON)
-                    .body(format!("{{\"value\":{}}}", id));
-            }
-        })
-        .run()?;
+    let mut server = Server::new()?;
 
+    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
+        if let Some(id) = req.param("id") {
+            res.content_type(response::ContentType::JSON)
+                .body(format!("{{\"value\":{}}}", id));
+        }
+    });
+
+    server.run()?;
     Ok(())
 }
+```
+
+To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore self-signed certificate warnings):
+
+```bash
+curl -k https://localhost:8443/api/v1/inc/100
 ```
 
 To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore self-signed certificate warnings):

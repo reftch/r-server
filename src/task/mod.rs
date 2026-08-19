@@ -44,13 +44,16 @@ where
     });
 }
 
-pub fn once<F>(conn: Box<dyn Metadata>, mut f: F)
+pub fn once<F>(metadata: &dyn Metadata, mut f: F)
 where
     F: for<'a> FnMut(&mut Response<'a>) + Send + 'static,
 {
+    let conn = metadata
+        .try_clone_metadata()
+        .expect("failed to clone connection metadata");
+
     thread::spawn(move || {
         let mut response = Response::new(conn.as_ref(), Status::Ok, b"", ContentType::TEXT);
-
         f(&mut response);
     });
 }

@@ -209,6 +209,7 @@ impl Server {
             );
 
             let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+
             if let Some(handler_fn) = router.route(&mut request) {
                 handler_fn(&request, &mut response);
             } else {
