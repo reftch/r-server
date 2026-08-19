@@ -8,11 +8,28 @@ pub use self::method::{InvalidMethod, Method};
 pub type HandlerResponse<'a> = Response<'a>;
 pub type HandlerFn = for<'a> fn(&Request<'a>, &mut Response<'a>);
 
-// Wrap the function pointer in a struct to break the recursive type alias cycle.
+pub struct Next<'a> {
+    rest: &'a [MiddlewareFn],
+    handler: HandlerFn,
+}
+
+impl<'a> Next<'a> {
+    #[inline]
+    pub fn run<'b, 'c>(self, req: &'b Request<'a>, resp: &'c mut Response<'a>) {
+        if let Some((current_mw, next_mws)) = self.rest.split_first() {
+            let next = Next {
+                rest: next_mws,
+                handler: self.handler,
+            };
+            (current_mw.0)(req, resp, next);
+        } else {
+            (self.handler)(req, resp);
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
-pub struct MiddlewareFn(
-    pub for<'a> fn(&Request<'a>, &mut Response<'a>, &[MiddlewareFn], HandlerFn),
-);
+pub struct MiddlewareFn(pub for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>));
 
 const METHOD_COUNT: usize = 7;
 
@@ -56,8 +73,11 @@ impl Router {
         }
     }
 
-    pub fn use_middleware(&mut self, middleware: MiddlewareFn) {
-        self.middlewares.push(middleware);
+    pub fn use_middleware(
+        &mut self,
+        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
+    ) {
+        self.middlewares.push(MiddlewareFn(middleware));
     }
 
     pub fn add_route(&mut self, method: Method, path: &str, handler: HandlerFn) {
@@ -116,28 +136,16 @@ impl Router {
         current.handlers[method.index()]
     }
 
-    /// Dispatcher helper to advance the middleware slice stack
-    pub fn next<'a>(
-        req: &Request<'a>,
-        resp: &mut Response<'a>,
-        rest: &[MiddlewareFn],
-        handler: HandlerFn,
-    ) {
-        if let Some((current_mw, next_mws)) = rest.split_first() {
-            // Call the inner function pointer inside the struct wrapper
-            (current_mw.0)(req, resp, next_mws, handler);
-        } else {
-            handler(req, resp);
-        }
-    }
-
-    /// Entry point to process request through middlewares
     pub fn handle<'a>(
         &'a self,
         request: &Request<'a>,
         response: &mut Response<'a>,
         handler: HandlerFn,
     ) {
-        Self::next(request, response, &self.middlewares, handler);
+        let next = Next {
+            rest: &self.middlewares,
+            handler,
+        };
+        next.run(request, response);
     }
 }

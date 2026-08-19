@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
-use crate::router::MiddlewareFn;
+use crate::router::Next;
 use crate::router::Router;
 use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::utils::get_file_info;
@@ -126,7 +126,10 @@ impl Server {
         self
     }
 
-    pub fn use_middleware(mut self, middleware: MiddlewareFn) -> Self {
+    pub fn use_middleware(
+        &mut self,
+        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
+    ) -> &mut Self {
         Arc::get_mut(&mut self.router)
             .expect("Cannot add middleware: Router is already shared across threads")
             .use_middleware(middleware);
