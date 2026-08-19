@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
+use crate::router::MiddlewareFn;
 use crate::router::Router;
 use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::utils::get_file_info;
@@ -119,10 +120,16 @@ impl Server {
         path: &str,
         handler: crate::router::HandlerFn,
     ) -> &mut Self {
-        if let Some(router) = std::sync::Arc::get_mut(&mut self.router) {
-            trace!("Successfully added route: {} {}", method.index(), path);
-            router.add_route(method, path, handler);
-        }
+        Arc::get_mut(&mut self.router)
+            .expect("Cannot add route: Router is already shared across threads")
+            .add_route(method, path, handler);
+        self
+    }
+
+    pub fn use_middleware(mut self, middleware: MiddlewareFn) -> Self {
+        Arc::get_mut(&mut self.router)
+            .expect("Cannot add middleware: Router is already shared across threads")
+            .use_middleware(middleware);
         self
     }
 
@@ -211,7 +218,8 @@ impl Server {
             let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
 
             if let Some(handler_fn) = router.route(&mut request) {
-                handler_fn(&request, &mut response);
+                // Execute route handler inside middleware chain
+                router.handle(&request, &mut response, handler_fn);
             } else {
                 if let Some((content, content_type, etag, last_modified)) =
                     get_file_info(request.path, assets_path)
@@ -238,7 +246,7 @@ impl Server {
                 return Ok(true);
             }
 
-            // Prepare the response for writing and clear the read buffer to prepare for next cycle.
+            // Prepare response for writing and clear buffer
             conn.write_buf = response.build();
             conn.read_buf.clear();
             trace!(
@@ -246,12 +254,62 @@ impl Server {
                 conn.write_buf.len()
             );
         } else {
-            // We don't log anything here if the buffer is just incomplete,
-            // as that would be too noisy (the loop might trigger many times for a partial request).
             trace!("Buffer contains partial request; waiting for more data...");
         }
 
         Ok(true)
+
+        // // Attempt to parse the request from the accumulated buffer.
+        // if let Some(mut request) = Request::parse(&conn.read_buf) {
+        //     trace!(
+        //         "Request parsed successfully: {} {}",
+        //         request.method, request.path
+        //     );
+
+        //     let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+
+        //     if let Some(handler_fn) = router.route(&mut request) {
+        //         handler_fn(&request, &mut response);
+        //     } else {
+        //         if let Some((content, content_type, etag, last_modified)) =
+        //             get_file_info(request.path, assets_path)
+        //         {
+        //             response.body(content);
+        //             response.content_type(content_type);
+        //             response.header("Cache-control", "public, max-age=3600");
+
+        //             if !etag.is_empty() {
+        //                 response.header("ETag", etag);
+        //             }
+
+        //             if !last_modified.is_empty() {
+        //                 response.header("Last-Modified", last_modified);
+        //             }
+        //         } else {
+        //             response.body("Not Found");
+        //             response.status(Status::NotFound);
+        //         }
+        //     }
+
+        //     // Prevent sending an empty body
+        //     if response.body.is_empty() {
+        //         return Ok(true);
+        //     }
+
+        //     // Prepare the response for writing and clear the read buffer to prepare for next cycle.
+        //     conn.write_buf = response.build();
+        //     conn.read_buf.clear();
+        //     trace!(
+        //         "Response prepared; write_buf size: {} bytes",
+        //         conn.write_buf.len()
+        //     );
+        // } else {
+        //     // We don't log anything here if the buffer is just incomplete,
+        //     // as that would be too noisy (the loop might trigger many times for a partial request).
+        //     trace!("Buffer contains partial request; waiting for more data...");
+        // }
+
+        // Ok(true)
     }
 
     fn run_loop(&mut self) -> io::Result<()> {

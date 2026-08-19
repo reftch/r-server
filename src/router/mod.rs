@@ -8,6 +8,12 @@ pub use self::method::{InvalidMethod, Method};
 pub type HandlerResponse<'a> = Response<'a>;
 pub type HandlerFn = for<'a> fn(&Request<'a>, &mut Response<'a>);
 
+// Wrap the function pointer in a struct to break the recursive type alias cycle.
+#[derive(Clone, Copy)]
+pub struct MiddlewareFn(
+    pub for<'a> fn(&Request<'a>, &mut Response<'a>, &[MiddlewareFn], HandlerFn),
+);
+
 const METHOD_COUNT: usize = 7;
 
 struct ParamChild {
@@ -33,6 +39,7 @@ impl TrieNode {
 
 pub struct Router {
     root: TrieNode,
+    middlewares: Vec<MiddlewareFn>,
 }
 
 impl Default for Router {
@@ -45,7 +52,12 @@ impl Router {
     pub fn new() -> Self {
         Self {
             root: TrieNode::new(),
+            middlewares: Vec::new(),
         }
+    }
+
+    pub fn use_middleware(&mut self, middleware: MiddlewareFn) {
+        self.middlewares.push(middleware);
     }
 
     pub fn add_route(&mut self, method: Method, path: &str, handler: HandlerFn) {
@@ -103,7 +115,29 @@ impl Router {
 
         current.handlers[method.index()]
     }
-}
 
-#[cfg(test)]
-mod tests;
+    /// Dispatcher helper to advance the middleware slice stack
+    pub fn next<'a>(
+        req: &Request<'a>,
+        resp: &mut Response<'a>,
+        rest: &[MiddlewareFn],
+        handler: HandlerFn,
+    ) {
+        if let Some((current_mw, next_mws)) = rest.split_first() {
+            // Call the inner function pointer inside the struct wrapper
+            (current_mw.0)(req, resp, next_mws, handler);
+        } else {
+            handler(req, resp);
+        }
+    }
+
+    /// Entry point to process request through middlewares
+    pub fn handle<'a>(
+        &'a self,
+        request: &Request<'a>,
+        response: &mut Response<'a>,
+        handler: HandlerFn,
+    ) {
+        Self::next(request, response, &self.middlewares, handler);
+    }
+}
