@@ -1,6 +1,6 @@
 [package]
 name = "r-server"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "Reactive Http Server"
 license = "Apache-2.0"
