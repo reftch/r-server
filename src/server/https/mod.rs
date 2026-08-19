@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
-use crate::router::Router;
+use crate::router::{Next, Router};
 
 #[repr(C)]
 struct PollFd {
@@ -168,6 +168,16 @@ impl Server {
         self
     }
 
+    pub fn use_middleware(
+        &mut self,
+        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
+    ) -> &mut Self {
+        Arc::get_mut(&mut self.router)
+            .expect("Cannot add middleware: Router is already shared across threads")
+            .use_middleware(middleware);
+        self
+    }
+
     fn would_block(err: &io::Error) -> bool {
         matches!(
             err.kind(),
@@ -291,7 +301,9 @@ impl Server {
             let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
 
             if let Some(handler_fn) = router.route(&mut request) {
-                handler_fn(&request, &mut response);
+                // handler_fn(&request, &mut response);
+                // Execute route handler inside middleware chain
+                router.handle(&request, &mut response, handler_fn);
             } else if let Some((content, content_type, etag, last_modified)) =
                 get_file_info(request.path, assets_path)
             {
