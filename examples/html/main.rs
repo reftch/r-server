@@ -1,11 +1,4 @@
-use r_server::{
-    info, logger,
-    request::Request,
-    response::{self, Response},
-    router::{Method, Next},
-    server::http::Server,
-    task,
-};
+use r_server::{logger, response, router::Method, server::http::Server, task};
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -13,19 +6,10 @@ use std::{
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn logger(req: &Request, res: &mut Response, next: Next) {
-    let start = std::time::Instant::now();
-
-    next.run(req, res);
-
-    info!("{} {} - {:?}", req.method, req.path, start.elapsed());
-}
-
 fn main() -> std::io::Result<()> {
     r_server::logger::set_level(logger::LogLevel::Info);
 
     Server::new()?
-        .use_middleware(logger)
         .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)
@@ -46,6 +30,7 @@ fn main() -> std::io::Result<()> {
             );
         })
         .assets_path("./examples/html/assets")
+        .bind("127.0.0.1", 8082)
         .run()?;
 
     Ok(())
