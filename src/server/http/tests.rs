@@ -24,54 +24,55 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         logger::set_level(LogLevel::None);
 
-        // Use port 0 to let the OS assign a free port
         let mut server = Server::new()?;
-        server.bind("127.0.0.1", 0);
-        server.route(Method::GET, "/", hello_handler);
-        server.run()?;
+        server
+            .bind("127.0.0.1", 18080)
+            .route(Method::GET, "/", hello_handler);
 
-        let addr = server.listener.as_ref().unwrap().local_addr().unwrap();
         thread::spawn(move || {
             if let Err(e) = server.run() {
                 eprintln!("Server error: {}", e);
             }
         });
 
-        // Wait a bit for the server to start and bind
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(100));
 
-        let mut stream = TcpStream::connect(addr).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:18080")?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
 
-        // Send a basic HTTP GET request
-        let request = format!("GET / HTTP/1.1\r\nHost: {}\r\n\r\n", addr.ip());
-        stream.write_all(request.as_bytes()).unwrap();
+        stream.write_all(
+            b"GET / HTTP/1.1\r\n\
+              Host: 127.0.0.1\r\n\
+              Connection: close\r\n\
+              \r\n",
+        )?;
 
-        // Read the response
         let mut buffer = Vec::new();
-        let mut chunk = [0; 1024];
+        let mut chunk = [0u8; 1024];
+
         loop {
             match stream.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
                     buffer.extend_from_slice(&chunk[..n]);
+
                     if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    break;
+                }
+                Err(e) => return Err(e.into()),
             }
         }
 
-        let response_str = String::from_utf8_lossy(&buffer);
-        assert!(response_str.contains("HTTP/1.1"));
-        assert!(response_str.contains("200 OK"));
-        assert!(response_str.contains("Hello, World!"));
+        let response = String::from_utf8_lossy(&buffer);
+
+        assert!(response.contains("HTTP/1.1"), "Response: {response}");
+        assert!(response.contains("200 OK"), "Response: {response}");
+        assert!(response.contains("Hello, World!"), "Response: {response}");
 
         Ok(())
     }
@@ -81,48 +82,53 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         logger::set_level(LogLevel::None);
 
-        let mut server = Server::new().unwrap();
-        server.bind("127.0.0.1", 0);
-        server.route(Method::GET, "/", hello_handler);
-        server.run()?;
-
-        let addr = server.listener.as_ref().unwrap().local_addr().unwrap();
+        let mut server = Server::new()?;
+        server
+            .bind("127.0.0.1", 18081)
+            .route(Method::GET, "/", hello_handler);
 
         thread::spawn(move || {
-            let _ = server.run();
+            if let Err(e) = server.run() {
+                eprintln!("Server error: {}", e);
+            }
         });
 
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(100));
 
-        let mut stream = TcpStream::connect(addr).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:18081")?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
 
-        // Send a request for a non-existent path
-        let request = format!("GET /not-found HTTP/1.1\r\nHost: {}\r\n\r\n", addr.ip());
-        stream.write_all(request.as_bytes()).unwrap();
+        stream.write_all(
+            b"GET /not-found HTTP/1.1\r\n\
+              Host: 127.0.0.1\r\n\
+              Connection: close\r\n\
+              \r\n",
+        )?;
 
         let mut buffer = Vec::new();
-        let mut chunk = [0; 1024];
+        let mut chunk = [0u8; 1024];
+
         loop {
             match stream.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
                     buffer.extend_from_slice(&chunk[..n]);
+
                     if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    break;
+                }
+                Err(e) => return Err(e.into()),
             }
         }
 
-        let response_str = String::from_utf8_lossy(&buffer);
-        assert!(response_str.contains("404 Not Found"));
+        let response = String::from_utf8_lossy(&buffer);
+
+        assert!(response.contains("404 Not Found"), "Response: {response}");
 
         Ok(())
     }
