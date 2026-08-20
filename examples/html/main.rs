@@ -45,7 +45,7 @@ fn main() -> std::io::Result<()> {
                 },
             );
         })
-        .assets_path("./examples/html/assets")
+        // .assets_path("./examples/html/assets")
         .run()?;
 
     Ok(())
