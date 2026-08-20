@@ -1,6 +1,6 @@
 use crate::request::Request;
 use crate::response::Response;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::Path};
 
 pub mod method;
 pub use self::method::{InvalidMethod, Method};
@@ -11,8 +11,8 @@ pub type HandlerResponse = Response;
 /// A function signature for request handlers.
 pub type HandlerFn = fn(&Request, &mut Response);
 
-/// A function signature for static request handlers.
-pub type HandlerStaticFn = fn(&Request, &mut Response, &PathBuf);
+/// A function signature for static request handlers using `&Path` slice.
+pub type HandlerStaticFn = fn(&Request, &mut Response, &Path);
 
 /// Represents the chain of execution for middleware.
 pub struct Next<'a> {
@@ -45,11 +45,13 @@ pub struct MiddlewareFn(pub fn(&Request, &mut Response, Next));
 /// Constant representing the number of HTTP methods supported by the router.
 const METHOD_COUNT: usize = 7;
 
+/// A node in the Trie representing a path parameter (e.g., `:id`).
 struct ParamChild {
     name: Box<str>,
     node: Box<TrieNode>,
 }
 
+/// A node in the Trie representing a segment of a URL path.
 struct TrieNode {
     children: HashMap<Box<str>, Box<TrieNode>>,
     param_child: Option<ParamChild>,
@@ -152,13 +154,13 @@ impl Router {
         next.run(request, response);
     }
 
-    /// Entry point to process static file handlers through the exact same middleware pipeline.
+    /// Entry point to process static file handlers through the middleware pipeline.
     pub fn static_handle(
         &self,
         request: &Request,
         response: &mut Response,
         handler: HandlerStaticFn,
-        path: &PathBuf,
+        path: &Path,
     ) {
         let closure = |req: &Request, resp: &mut Response| {
             handler(req, resp, path);

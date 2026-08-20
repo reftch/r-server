@@ -6,6 +6,7 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 
 - **Asynchronous Engine**: Uses non-blocking I/O for efficient concurrent connection handling.
 - **High-Performance Routing**: Trie-based router with support for dynamic path parameters (e.g., `/users/:id`).
+- **Middleware**: Pluggable request pipeline via `fn(&Request, &mut Response, Next)`, chained with `use_middleware` to run logic (logging, timing, auth) for every request before it reaches the handler.
 - **Static File Serving**: Built-in support for serving assets from a designated directory with automatic MIME type detection.
 - **Modular Architecture**: Separated into specialized modules for requests, responses, routing, and server logic.
 
@@ -23,7 +24,7 @@ Manages the construction of HTTP responses. It provides an expressive Builder-st
 
 ### `router`
 
-Implements a high-performance Trie-based router that supports both static paths and dynamic parameters (e.g., `/users/:id`). It efficiently matches requests to handlers in $O(path\_length)$ time regardless of the number of routes.
+Implements a high-performance Trie-based router that supports both static paths and dynamic parameters (e.g., `/users/:id`). It efficiently matches requests to handlers in $O(path\_length)$ time regardless of the number of routes. It also provides a middleware pipeline: every request passes through registered middleware (via `use_middleware`) before reaching its handler, and through the same pipeline for static file serving.
 
 ### `server`
 
@@ -189,6 +190,53 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+### Middleware
+
+Both the HTTP (`server::Server`) and HTTPS (`sslserver::Server`) servers support a global
+middleware pipeline. A middleware is a plain function with the signature
+`fn(&Request, &mut Response, Next)`. Each middleware receives the current request, a mutable
+response, and a `Next` value. Calling `next.run(req, res)` invokes the remaining middleware
+and, finally, the matched route handler. Middleware runs in registration order and applies to
+every request, including static file serving.
+
+Both `use_middleware` and `route` return `&mut Self`, so they can be chained after `Server::new()`.
+
+```rust
+use r_server::{
+    info, logger,
+    request::Request,
+    response::{self, Response},
+    router::{Method, Next},
+    server::Server,
+};
+
+// A middleware that logs each request with its elapsed handling time.
+fn logger(req: &Request, res: &mut Response, next: Next) {
+    let start = std::time::Instant::now();
+
+    next.run(req, res);
+
+    info!("{} {} - {:?}", req.method, req.path, start.elapsed());
+}
+
+fn main() -> std::io::Result<()> {
+    r_server::logger::set_level(logger::LogLevel::Info);
+
+    Server::new()?
+        .use_middleware(logger)
+        .route(Method::GET, "/api/v1/users/:id", |req, res| {
+            if let Some(id) = req.param("id") {
+                res.content_type(response::ContentType::JSON)
+                   .body(format!("{{\"value\":{}}}", id));
+            }
+        })
+        .assets_path("./examples/html/assets")
+        .run()?;
+
+    Ok(())
+}
+```
+
 ## API Reference Summary
 
 ### `Server`
@@ -197,9 +245,10 @@ fn main() -> std::io::Result<()> {
 | ----------------------------------- | ------------------------------------------------------------- |
 | `new() -> IoResult<Self>` | Creates a new server instance. Reads `HOST`/`PORT` env vars, defaulting to `0.0.0.0:8080` for the HTTP server and `0.0.0.0:8443` for the HTTPS server. |
 | `bind(host: &str, port: u16)`         | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction. |
-| `assets_path(path: &str)`            | Sets the directory for serving static files.                   |
-| `route(method, path, handler)`      | Registers a new route with a specific HTTP method and path.   |
-| `run() -> IoResult<()>`             | Starts the asynchronous event loop.                           |
+| `assets_path(path: &str)`             | Sets the directory for serving static files.                    |
+| `route(method, path, handler)`       | Registers a new route with a specific HTTP method and path.    |
+| `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`. |
+| `run() -> IoResult<()>`              | Starts the asynchronous event loop.                            |
 
 ### `Response` (Builder Pattern)
 

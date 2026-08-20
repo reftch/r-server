@@ -2,7 +2,7 @@ use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::request::Request;
@@ -258,7 +258,7 @@ impl Server {
         Ok(true)
     }
 
-    fn static_handler(req: &Request, res: &mut Response, path: &PathBuf) {
+    fn static_handler(req: &Request, res: &mut Response, path: &Path) {
         if let Some((content, content_type, etag, last_modified)) = get_file_info(&req.path, path) {
             res.body(content);
             res.content_type(content_type);

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -167,12 +167,8 @@ impl Server {
         addr.parse::<std::net::SocketAddr>()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("failed to create SSL acceptor: {}", e),
-            )
-        })?;
+        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
+            .map_err(|e| io::Error::other(format!("failed to create SSL acceptor: {}", e)))?;
 
         builder
             .set_private_key_file("key.pem", SslFiletype::PEM)
@@ -398,7 +394,7 @@ impl Server {
         Ok(true)
     }
 
-    fn static_handler(req: &Request, res: &mut Response, path: &PathBuf) {
+    fn static_handler(req: &Request, res: &mut Response, path: &Path) {
         if let Some((content, content_type, etag, last_modified)) = get_file_info(&req.path, path) {
             res.body(content);
             res.content_type(content_type);

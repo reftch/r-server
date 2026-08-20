@@ -10,12 +10,15 @@ pub struct Request {
     pub version: Box<str>,
 
     /// A list of request headers as key-value pairs.
-    pub headers: Vec<(Box<str>, Box<str>)>,
+    pub headers: Vec<KeyValuePair>,
     /// A list of route parameters.
-    pub params: Vec<(Box<str>, Box<str>)>,
+    pub params: Vec<KeyValuePair>,
     /// A list of query parameters from the URL.
-    pub query_params: Vec<(Box<str>, Box<str>)>,
+    pub query_params: Vec<KeyValuePair>,
 }
+
+/// Type alias for key-value string pairs used in headers and parameters.
+pub type KeyValuePair = (Box<str>, Box<str>);
 
 impl Request {
     /// Finds the end of the request headers by looking for the double CRLF.
@@ -91,7 +94,7 @@ impl Request {
 
     /// Parses the path and query parameters from a full path string.
     #[inline(always)]
-    fn parse_path_and_query(full_path: &str) -> (&str, Vec<(Box<str>, Box<str>)>) {
+    fn parse_path_and_query(full_path: &str) -> (&str, Vec<KeyValuePair>) {
         let Some(qpos) = memchr(b'?', full_path.as_bytes()) else {
             return (full_path, Vec::with_capacity(4));
         };
@@ -122,7 +125,7 @@ impl Request {
 
     /// Parses headers from the provided lines.
     #[inline(always)]
-    fn parse_headers(lines: &mut std::str::Split<'_, &str>) -> Vec<(Box<str>, Box<str>)> {
+    fn parse_headers(lines: &mut std::str::Split<'_, &str>) -> Vec<KeyValuePair> {
         let mut headers = Vec::with_capacity(12);
 
         for line in lines {
