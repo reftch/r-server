@@ -8,9 +8,9 @@ mod tests {
     fn test_request_parse_valid() {
         let buf = b"GET / HTTP/1.1\r\n\r\n";
         let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.method, "GET");
-        assert_eq!(request.path, "/");
-        assert_eq!(request.version, "HTTP/1.1");
+        assert_eq!(request.method, "GET".into());
+        assert_eq!(request.path, "/".into());
+        assert_eq!(request.version, "HTTP/1.1".into());
     }
 
     #[test]
@@ -18,8 +18,8 @@ mod tests {
         let buf =
             b"POST / HTTP/1.1\r\nContent-Type: application/json\r\nX-Custom-Header: value\r\n\r\n";
         let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.method, "POST");
-        assert_eq!(request.path, "/");
+        assert_eq!(request.method, "POST".into());
+        assert_eq!(request.path, "/".into());
         assert_eq!(request.header("Content-Type"), Some("application/json"));
         assert_eq!(request.header("X-Custom-Header"), Some("value"));
     }
@@ -70,7 +70,7 @@ mod tests {
         // This might be a bit of an edge case for the current parser
         let buf = b"GET / HTTP/1.1\r\n\r\n";
         let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.path, "/");
+        assert_eq!(request.path, "/".into());
     }
 
     // #[test]
@@ -96,7 +96,7 @@ mod tests {
     fn test_request_parse_query_params() {
         let buf = b"GET /path?name=value&age=30 HTTP/1.1\r\n\r\n";
         let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.path, "/path");
+        assert_eq!(request.path, "/path".into());
         assert_eq!(request.query("name"), Some("value"));
         assert_eq!(request.query("age"), Some("30"));
     }

@@ -1,40 +1,49 @@
 use crate::response::Response;
 
-pub struct ResponseBuilder<'a> {
-    response: Response<'a>,
+pub struct ResponseBuilder {
+    response: Response,
 }
 
-impl<'a> ResponseBuilder<'a> {
-    pub fn new(response: Response<'a>) -> Self {
+impl ResponseBuilder {
+    pub fn new(response: Response) -> Self {
         Self { response }
     }
 
     pub fn build(self) -> Vec<u8> {
-        let mut line = format!(
-            "HTTP/1.1 {} {}\r\n",
-            self.response.status.as_u16(),
-            self.response.status.reason_phrase()
+        // Estimate header size to minimize re-allocations
+        let estimated_header_size = 128 + (self.response.headers.len() * 64);
+        let mut full_response =
+            Vec::with_capacity(estimated_header_size + self.response.body.len());
+
+        // Status Line
+        full_response.extend_from_slice(
+            format!(
+                "HTTP/1.1 {} {}\r\n",
+                self.response.status.as_u16(),
+                self.response.status.reason_phrase()
+            )
+            .as_bytes(),
         );
 
-        // Add Content-Type header
-        line.push_str(&format!(
-            "Content-Type: {}\r\n",
-            self.response.content_type.as_str()
-        ));
+        // Content-Type Header
+        full_response.extend_from_slice(
+            format!("Content-Type: {}\r\n", self.response.content_type.as_str()).as_bytes(),
+        );
 
-        // Add Content-Length header
-        line.push_str(&format!("Content-Length: {}\r\n", self.response.body.len()));
+        // Content-Length Header
+        full_response.extend_from_slice(
+            format!("Content-Length: {}\r\n", self.response.body.len()).as_bytes(),
+        );
 
-        // Add custom headers
+        // Custom Headers
         for (key, value) in &self.response.headers {
-            line.push_str(&format!("{}: {}\r\n", key, value));
+            full_response.extend_from_slice(format!("{}: {}\r\n", key, value).as_bytes());
         }
 
-        // End headers
-        line.push_str("\r\n");
+        // End Headers
+        full_response.extend_from_slice(b"\r\n");
 
-        // Build complete response
-        let mut full_response = line.into_bytes();
+        // Body
         full_response.extend_from_slice(&self.response.body);
 
         full_response

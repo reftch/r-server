@@ -1,8 +1,16 @@
-use std::io;
+use std::{io, sync::Arc};
 
-#[derive(Debug, Clone)]
-pub struct ConnectionMetadata<T> {
-    pub stream: T,
+pub struct ConnectionMetadata<S> {
+    pub stream: Arc<S>,
+}
+
+impl<S> Clone for ConnectionMetadata<S> {
+    fn clone(&self) -> Self {
+        Self {
+            // Clones the Arc reference count, not the underlying stream `S`
+            stream: Arc::clone(&self.stream),
+        }
+    }
 }
 
 pub trait ConnectionStreamClone {
@@ -17,7 +25,9 @@ where
 {
     pub fn try_clone(&self) -> io::Result<Self> {
         Ok(Self {
-            stream: self.stream.clone_stream()?,
+            // 1. Call clone_stream() on inner `T` via .as_ref()
+            // 2. Wrap the cloned stream back into an Arc
+            stream: Arc::new(self.stream.as_ref().clone_stream()?),
         })
     }
 }

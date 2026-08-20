@@ -19,11 +19,10 @@ static TASKS: OnceLock<Mutex<HashMap<String, Cancel>>> = OnceLock::new();
 
 pub fn repeat_every<F>(key: impl Into<String>, metadata: &dyn Metadata, delay: Duration, mut f: F)
 where
-    F: for<'a> FnMut(&Response<'a>) + Send + 'static,
+    F: FnMut(&mut Response) + Send + 'static,
 {
-    let conn = metadata
-        .try_clone_metadata()
-        .expect("failed to clone connection metadata");
+    // Clone the metadata box before moving into the background thread
+    let conn = metadata.clone_box();
     let tasks = TASKS.get_or_init(|| Mutex::new(HashMap::new()));
 
     let key = key.into();
@@ -35,9 +34,11 @@ where
 
     thread::spawn(move || {
         while !cancel.load(Ordering::Relaxed) {
-            let response = Response::new(conn.as_ref(), Status::Ok, b"", ContentType::SSE);
+            // Clone the Box<dyn Metadata> for each iteration
+            let mut response =
+                Response::new(Arc::from(conn.clone()), Status::Ok, b"", ContentType::SSE);
 
-            f(&response);
+            f(&mut response);
 
             thread::sleep(delay);
         }
@@ -46,14 +47,13 @@ where
 
 pub fn once<F>(metadata: &dyn Metadata, mut f: F)
 where
-    F: for<'a> FnMut(&mut Response<'a>) + Send + 'static,
+    F: FnMut(&mut Response) + Send + 'static,
 {
-    let conn = metadata
-        .try_clone_metadata()
-        .expect("failed to clone connection metadata");
+    let conn = metadata.clone_box();
 
     thread::spawn(move || {
-        let mut response = Response::new(conn.as_ref(), Status::Ok, b"", ContentType::TEXT);
+        let mut response =
+            Response::new(Arc::from(conn.clone()), Status::Ok, b"", ContentType::TEXT);
         f(&mut response);
     });
 }

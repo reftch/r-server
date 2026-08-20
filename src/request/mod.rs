@@ -1,23 +1,23 @@
 use memchr::memchr;
 
-/// Represents an HTTP request.
-pub struct Request<'a> {
+/// Represents an HTTP request without lifetime annotations.
+pub struct Request {
     /// The HTTP method (e.g., "GET", "POST").
-    pub method: &'a str,
+    pub method: Box<str>,
     /// The request path.
-    pub path: &'a str,
+    pub path: Box<str>,
     /// The HTTP version (e.g., "HTTP/1.1").
-    pub version: &'a str,
+    pub version: Box<str>,
 
     /// A list of request headers as key-value pairs.
-    pub headers: Vec<(&'a str, &'a str)>,
-    /// A list of parameters (not explicitly parsed from the body in this implementation).
-    pub params: Vec<(&'a str, &'a str)>,
+    pub headers: Vec<(Box<str>, Box<str>)>,
+    /// A list of route parameters.
+    pub params: Vec<(Box<str>, Box<str>)>,
     /// A list of query parameters from the URL.
-    pub query_params: Vec<(&'a str, &'a str)>,
+    pub query_params: Vec<(Box<str>, Box<str>)>,
 }
 
-impl<'a> Request<'a> {
+impl Request {
     /// Finds the end of the request headers by looking for the double CRLF.
     #[inline(always)]
     fn find_header_end(buf: &[u8]) -> Option<usize> {
@@ -38,7 +38,7 @@ impl<'a> Request<'a> {
 
     /// Parses an HTTP request from a byte buffer.
     #[inline(always)]
-    pub fn parse(buf: &'a [u8]) -> Option<Self> {
+    pub fn parse(buf: &[u8]) -> Option<Self> {
         let header_end = Self::find_header_end(buf)?;
 
         // HTTP is ASCII. Avoid UTF-8 validation.
@@ -80,9 +80,9 @@ impl<'a> Request<'a> {
         let headers = Self::parse_headers(&mut lines);
 
         Some(Self {
-            method,
-            path,
-            version,
+            method: method.into(),
+            path: path.into(),
+            version: version.into(),
             headers,
             params: Vec::with_capacity(4),
             query_params,
@@ -91,7 +91,7 @@ impl<'a> Request<'a> {
 
     /// Parses the path and query parameters from a full path string.
     #[inline(always)]
-    fn parse_path_and_query(full_path: &str) -> (&str, Vec<(&str, &str)>) {
+    fn parse_path_and_query(full_path: &str) -> (&str, Vec<(Box<str>, Box<str>)>) {
         let Some(qpos) = memchr(b'?', full_path.as_bytes()) else {
             return (full_path, Vec::with_capacity(4));
         };
@@ -111,7 +111,7 @@ impl<'a> Request<'a> {
 
             if let Some(eq) = memchr(b'=', &bytes[start..end]) {
                 let eq = start + eq;
-                params.push((&query[start..eq], &query[eq + 1..end]));
+                params.push((query[start..eq].into(), query[eq + 1..end].into()));
             }
 
             start = end + 1;
@@ -122,7 +122,7 @@ impl<'a> Request<'a> {
 
     /// Parses headers from the provided lines.
     #[inline(always)]
-    fn parse_headers<'b>(lines: &mut std::str::Split<'b, &str>) -> Vec<(&'b str, &'b str)> {
+    fn parse_headers(lines: &mut std::str::Split<'_, &str>) -> Vec<(Box<str>, Box<str>)> {
         let mut headers = Vec::with_capacity(12);
 
         for line in lines {
@@ -151,7 +151,7 @@ impl<'a> Request<'a> {
                 end -= 1;
             }
 
-            headers.push((key, &line[start..end]));
+            headers.push((key.into(), line[start..end].into()));
         }
 
         headers
@@ -162,8 +162,8 @@ impl<'a> Request<'a> {
     pub fn param(&self, name: &str) -> Option<&str> {
         self.params
             .iter()
-            .find(|&&(k, _)| k == name)
-            .map(|&(_, v)| v)
+            .find(|(k, _)| &**k == name)
+            .map(|(_, v)| &**v)
     }
 
     /// Gets a header by name.
@@ -171,8 +171,8 @@ impl<'a> Request<'a> {
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
-            .find(|&&(k, _)| k == name)
-            .map(|&(_, v)| v)
+            .find(|(k, _)| &**k == name)
+            .map(|(_, v)| &**v)
     }
 
     /// Gets a query parameter by name.
@@ -180,8 +180,8 @@ impl<'a> Request<'a> {
     pub fn query(&self, name: &str) -> Option<&str> {
         self.query_params
             .iter()
-            .find(|&&(k, _)| k == name)
-            .map(|&(_, v)| v)
+            .find(|(k, _)| &**k == name)
+            .map(|(_, v)| &**v)
     }
 
     /// Gets the Content-Type header.

@@ -1,24 +1,30 @@
-use std::io;
-
-use crate::{
-    response::stream::StreamWriter,
-    server::connection::{ConnectionMetadata, ConnectionStreamClone},
-};
+use crate::server::connection::ConnectionMetadata;
+use std::io::Write;
 
 pub trait Metadata: Send + Sync {
-    fn try_clone_metadata(&self) -> io::Result<Box<dyn Metadata>>;
-    fn write(&self, data: &[u8]) -> io::Result<()>;
+    fn write(&self, buf: &[u8]) -> std::io::Result<()>;
+
+    /// Creates a cloned trait object.
+    fn clone_box(&self) -> Box<dyn Metadata>;
 }
 
-impl<T> Metadata for ConnectionMetadata<T>
+impl<S> Metadata for ConnectionMetadata<S>
 where
-    T: ConnectionStreamClone + StreamWriter + Send + Sync + 'static,
+    S: Send + Sync + 'static,
+    for<'a> &'a S: Write, // Ensures &S implements Write (satisfied by TcpStream)
 {
-    fn try_clone_metadata(&self) -> io::Result<Box<dyn Metadata>> {
-        Ok(Box::new(self.try_clone()?))
+    fn write(&self, buf: &[u8]) -> std::io::Result<()> {
+        // Dereference Arc to call Write on &S and convert Result<usize> to Result<()>
+        (&*self.stream).write_all(buf)
     }
 
-    fn write(&self, data: &[u8]) -> io::Result<()> {
-        self.stream.write(data)
+    fn clone_box(&self) -> Box<dyn Metadata> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn Metadata> {
+    fn clone(&self) -> Self {
+        self.clone_box()
     }
 }

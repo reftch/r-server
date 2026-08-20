@@ -13,7 +13,7 @@ use std::{
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn logger<'a>(req: &Request<'a>, res: &mut Response<'a>, next: Next<'a>) {
+fn logger(req: &Request, res: &mut Response, next: Next) {
     let start = std::time::Instant::now();
 
     next.run(req, res);
@@ -34,8 +34,8 @@ fn main() -> std::io::Result<()> {
         })
         .route(Method::GET, "/stream", |req, res| {
             task::repeat_every(
-                req.path.to_owned(),
-                res.metadata,
+                req.path.to_string(), // Converts Box<str> / &str to String
+                &*res.metadata,       // Dereferences Arc<dyn Metadata> to &dyn Metadata
                 Duration::from_millis(50),
                 |res| {
                     let _ = res.stream(&format!(

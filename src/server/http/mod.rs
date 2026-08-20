@@ -1,6 +1,5 @@
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -11,8 +10,10 @@ use crate::response::{ContentType, Response, Status};
 use crate::router::Next;
 use crate::router::Router;
 use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
+use crate::server::metadata::Metadata;
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
+use std::io::{self, Read, Write};
 
 use std::sync::Arc;
 
@@ -23,17 +24,19 @@ struct PollFd {
     revents: i16,
 }
 
-struct Connection<TcpStream> {
-    metadata: ConnectionMetadata<TcpStream>,
-    read_buf: Vec<u8>,
-    write_buf: Vec<u8>,
+pub struct Connection<S> {
+    pub metadata: ConnectionMetadata<S>,
+    pub read_buf: Vec<u8>,
+    pub write_buf: Vec<u8>,
 }
 
 impl Connection<TcpStream> {
-    fn new(socket: TcpStream) -> io::Result<Self> {
+    pub fn new(socket: TcpStream) -> io::Result<Self> {
         socket.set_nonblocking(true)?;
         Ok(Self {
-            metadata: ConnectionMetadata { stream: socket },
+            metadata: ConnectionMetadata {
+                stream: Arc::new(socket),
+            },
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         })
@@ -126,10 +129,7 @@ impl Server {
         self
     }
 
-    pub fn use_middleware(
-        &mut self,
-        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
-    ) -> &mut Self {
+    pub fn use_middleware(&mut self, middleware: fn(&Request, &mut Response, Next)) -> &mut Self {
         Arc::get_mut(&mut self.router)
             .expect("Cannot add middleware: Router is already shared across threads")
             .use_middleware(middleware);
@@ -150,7 +150,8 @@ impl Server {
                 return Ok(WriteState::Done);
             }
 
-            match conn.metadata.stream.write(&conn.write_buf) {
+            // Dereference the Arc (`&*`) to call Write::write on `&TcpStream`
+            match (&*conn.metadata.stream).write(&conn.write_buf) {
                 Ok(0) => {
                     // Ok(0) usually means the connection was closed by the remote peer
                     debug!("Socket closed by peer (EOF on write); state: Close");
@@ -186,25 +187,24 @@ impl Server {
         assets_path: &Path,
     ) -> io::Result<bool> {
         let mut buf = [0; 1024];
+
         loop {
-            match conn.metadata.stream.read(&mut buf) {
+            // Call .read(&mut buf) on the underlying stream
+            match (&*conn.metadata.stream).read(&mut buf) {
                 Ok(0) => {
-                    // A read of 0 bytes usually signifies the peer has closed the connection.
+                    // A read of 0 bytes signifies the remote peer closed the connection.
                     debug!("Connection closed by peer (EOF); state: Terminating");
                     return Ok(false);
                 }
                 Ok(n) => {
-                    // Log successful reads at debug level to track data influx without spamming logs.
                     debug!("Read {} bytes from socket", n);
                     conn.read_buf.extend_from_slice(&buf[..n]);
                 }
                 Err(ref err) if Self::would_block(err) => {
-                    // Expected behavior in non-blocking I/O; move to processing phase.
                     debug!("Read would block; returning control to event loop");
                     break;
                 }
                 Err(err) => {
-                    // Actual I/O error (e.g., ConnectionReset).
                     error!("Socket read error: {}", err);
                     return Err(err);
                 }
@@ -218,14 +218,18 @@ impl Server {
                 request.method, request.path
             );
 
-            let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+            let metadata: Arc<dyn Metadata> = Arc::new(conn.metadata.clone());
+
+            // Pass cloned Arc<dyn Metadata> instead of borrowed reference &conn.metadata
+            let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
 
             if let Some(handler_fn) = router.route(&mut request) {
                 // Execute route handler inside middleware chain
                 router.handle(&request, &mut response, handler_fn);
             } else {
+                // Dereference or slice Box<str> to &str for file lookup
                 if let Some((content, content_type, etag, last_modified)) =
-                    get_file_info(request.path, assets_path)
+                    get_file_info(&request.path, assets_path)
                 {
                     response.body(content);
                     response.content_type(content_type);

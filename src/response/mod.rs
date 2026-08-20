@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::{fmt, io};
 
 pub mod builder;
@@ -12,15 +13,15 @@ use crate::server::metadata::Metadata;
 pub use self::content_type::ContentType;
 pub use self::status::Status;
 
-pub struct Response<'a> {
+pub struct Response {
     pub status: Status,
     pub body: Vec<u8>,
     pub content_type: ContentType,
     pub headers: HashMap<String, String>,
-    pub metadata: &'a dyn Metadata,
+    pub metadata: Arc<dyn Metadata>,
 }
 
-impl<'a> fmt::Debug for Response<'a> {
+impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Response")
             .field("status", &self.status)
@@ -32,21 +33,21 @@ impl<'a> fmt::Debug for Response<'a> {
     }
 }
 
-impl<'a> Clone for Response<'a> {
+impl Clone for Response {
     fn clone(&self) -> Self {
         Self {
             status: self.status,
             body: self.body.clone(),
             content_type: self.content_type.clone(),
             headers: self.headers.clone(),
-            metadata: self.metadata,
+            metadata: Arc::clone(&self.metadata),
         }
     }
 }
 
-impl<'a> Response<'a> {
+impl Response {
     pub fn new(
-        metadata: &'a dyn Metadata,
+        metadata: Arc<dyn Metadata>,
         status: Status,
         body: impl Into<Vec<u8>>,
         content_type: ContentType,
@@ -70,7 +71,6 @@ impl<'a> Response<'a> {
         V: Into<String>,
     {
         self.headers.entry(key.into()).or_insert(value.into());
-
         self
     }
 
@@ -107,7 +107,6 @@ impl<'a> Response<'a> {
 
     pub fn flush(&self) -> io::Result<()> {
         let response = self.clone().build();
-        // write stream
         self.metadata.write(&response)
     }
 }

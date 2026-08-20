@@ -6,11 +6,11 @@ pub mod method;
 pub use self::method::{InvalidMethod, Method};
 
 /// Type alias for a Response used within a handler.
-pub type HandlerResponse<'a> = Response<'a>;
+pub type HandlerResponse = Response;
 
 /// A function signature for request handlers.
 /// Takes a read-only reference to a `Request` and a mutable reference to a `Response`.
-pub type HandlerFn = for<'a> fn(&Request<'a>, &mut Response<'a>);
+pub type HandlerFn = fn(&Request, &mut Response);
 
 /// Represents the chain of execution for middleware.
 ///
@@ -30,7 +30,7 @@ impl<'a> Next<'a> {
     /// new `Next` instance containing the remaining chain.
     /// If no middlewares remain, the final `handler` is executed.
     #[inline]
-    pub fn run<'b, 'c>(self, req: &'b Request<'a>, resp: &'c mut Response<'a>) {
+    pub fn run(self, req: &Request, resp: &mut Response) {
         if let Some((current_mw, next_mws)) = self.rest.split_first() {
             let next = Next {
                 rest: next_mws,
@@ -47,7 +47,7 @@ impl<'a> Next<'a> {
 ///
 /// Signature: `fn(&Request, &mut Response, Next)`
 #[derive(Clone, Copy)]
-pub struct MiddlewareFn(pub for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>));
+pub struct MiddlewareFn(pub fn(&Request, &mut Response, Next));
 
 /// Constant representing the number of HTTP methods supported by the router.
 const METHOD_COUNT: usize = 7;
@@ -108,10 +108,7 @@ impl Router {
     }
 
     /// Registers a middleware function that will run for every request handled by this router.
-    pub fn use_middleware(
-        &mut self,
-        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
-    ) {
+    pub fn use_middleware(&mut self, middleware: fn(&Request, &mut Response, Next)) {
         self.middlewares.push(MiddlewareFn(middleware));
     }
 
@@ -149,14 +146,14 @@ impl Router {
     ///
     /// Returns `Some(HandlerFn)` if a match is found, otherwise `None`.
     #[inline]
-    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<HandlerFn> {
+    pub fn route(&self, request: &mut Request) -> Option<HandlerFn> {
         let mut current = &self.root;
 
         // Ignore query string for routing purposes
         let path = request
             .path
             .split_once('?')
-            .map_or(request.path, |(p, _)| p);
+            .map_or(&*request.path, |(p, _)| p);
 
         for part in path.split('/') {
             if part.is_empty() {
@@ -171,8 +168,8 @@ impl Router {
                     // If no static match, check if there is a dynamic parameter child
                     let param = current.param_child.as_ref()?;
 
-                    // Store the captured parameter in the request
-                    request.params.push((param.name.as_ref(), part));
+                    // Store the captured parameter in the request as Box<str>
+                    request.params.push((param.name.clone(), part.into()));
 
                     current = &param.node;
                 }
@@ -187,12 +184,7 @@ impl Router {
     /// Entry point to process a request through the entire pipeline.
     ///
     /// This triggers the middleware chain, which eventually calls the provided `handler`.
-    pub fn handle<'a>(
-        &'a self,
-        request: &Request<'a>,
-        response: &mut Response<'a>,
-        handler: HandlerFn,
-    ) {
+    pub fn handle(&self, request: &Request, response: &mut Response, handler: HandlerFn) {
         let next = Next {
             rest: &self.middlewares,
             handler,
