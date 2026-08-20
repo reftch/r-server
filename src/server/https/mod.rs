@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -137,7 +137,7 @@ pub struct Server {
 
 impl Server {
     pub fn new() -> io::Result<Self> {
-        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
 
         let port: u16 = std::env::var("PORT")
             .ok()
@@ -310,7 +310,7 @@ impl Server {
         }
     }
 
-    fn handle_read(conn: &mut Connection, router: &Router, assets_path: &Path) -> io::Result<bool> {
+    fn handle_read(&mut self, conn: &mut Connection) -> io::Result<bool> {
         let mut buf = [0u8; 1024];
 
         loop {
@@ -368,25 +368,16 @@ impl Server {
             let metadata: Arc<dyn Metadata> = Arc::new(conn.metadata.clone());
             let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
 
-            if let Some(handler_fn) = router.route(&mut request) {
-                router.handle(&request, &mut response, handler_fn);
-            } else if let Some((content, content_type, etag, last_modified)) =
-                get_file_info(&request.path, assets_path)
-            {
-                response.body(content);
-                response.content_type(content_type);
-                response.header("Cache-control", "public, max-age=3600");
-
-                if !etag.is_empty() {
-                    response.header("ETag", etag);
-                }
-
-                if !last_modified.is_empty() {
-                    response.header("Last-Modified", last_modified);
-                }
+            if let Some(handler_fn) = self.router.route(&mut request) {
+                self.router.handle(&request, &mut response, handler_fn);
             } else {
-                response.body("Not Found");
-                response.status(Status::NotFound);
+                // Execute route for static resoueces
+                self.router.static_handle(
+                    &request,
+                    &mut response,
+                    Self::static_handler,
+                    &self.assets_path, // Pass the static directory path
+                );
             }
 
             if response.body.is_empty() {
@@ -405,6 +396,25 @@ impl Server {
         }
 
         Ok(true)
+    }
+
+    fn static_handler(req: &Request, res: &mut Response, path: &PathBuf) {
+        if let Some((content, content_type, etag, last_modified)) = get_file_info(&req.path, path) {
+            res.body(content);
+            res.content_type(content_type);
+            res.header("Cache-control", "public, max-age=3600");
+
+            if !etag.is_empty() {
+                res.header("ETag", etag);
+            }
+
+            if !last_modified.is_empty() {
+                res.header("Last-Modified", last_modified);
+            }
+        } else {
+            res.body("Not Found");
+            res.status(Status::NotFound);
+        }
     }
 
     fn continue_handshake(conn: &mut Connection) -> io::Result<bool> {
@@ -631,7 +641,7 @@ impl Server {
                     }
 
                     if events & POLLIN != 0 {
-                        match Self::handle_read(conn, &self.router, &self.assets_path) {
+                        match self.handle_read(conn) {
                             Ok(true) => {
                                 if !conn.write_buf.is_empty() {
                                     item.events = POLLOUT;
