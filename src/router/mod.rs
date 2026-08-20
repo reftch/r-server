@@ -1,36 +1,31 @@
 use crate::request::Request;
 use crate::response::Response;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 pub mod method;
 pub use self::method::{InvalidMethod, Method};
 
 /// Type alias for a Response used within a handler.
-pub type HandlerResponse<'a> = Response<'a>;
+pub type HandlerResponse = Response;
 
 /// A function signature for request handlers.
-/// Takes a read-only reference to a `Request` and a mutable reference to a `Response`.
-pub type HandlerFn = for<'a> fn(&Request<'a>, &mut Response<'a>);
+pub type HandlerFn = fn(&Request, &mut Response);
+
+/// A function signature for static request handlers using `&Path` slice.
+pub type HandlerStaticFn = fn(&Request, &mut Response, &Path);
 
 /// Represents the chain of execution for middleware.
-///
-/// `Next` allows a middleware function to decide whether to continue the execution
-/// chain by calling `next.run()`, or to halt and return early.
 pub struct Next<'a> {
     /// The remaining middleware functions in the chain.
     rest: &'a [MiddlewareFn],
-    /// The final request handler to be called if all middleware pass control.
-    handler: HandlerFn,
+    /// The final request handler or closure to execute.
+    handler: &'a dyn Fn(&Request, &mut Response),
 }
 
 impl<'a> Next<'a> {
     /// Executes the middleware chain.
-    ///
-    /// If there are more middlewares in `rest`, the first one is popped and called with a
-    /// new `Next` instance containing the remaining chain.
-    /// If no middlewares remain, the final `handler` is executed.
     #[inline]
-    pub fn run<'b, 'c>(self, req: &'b Request<'a>, resp: &'c mut Response<'a>) {
+    pub fn run(self, req: &Request, resp: &mut Response) {
         if let Some((current_mw, next_mws)) = self.rest.split_first() {
             let next = Next {
                 rest: next_mws,
@@ -43,30 +38,23 @@ impl<'a> Next<'a> {
     }
 }
 
-/// A wrapper around a function that implements the middleware pattern.
-///
-/// Signature: `fn(&Request, &mut Response, Next)`
+/// A wrapper around a middleware function signature.
 #[derive(Clone, Copy)]
-pub struct MiddlewareFn(pub for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>));
+pub struct MiddlewareFn(pub fn(&Request, &mut Response, Next));
 
 /// Constant representing the number of HTTP methods supported by the router.
 const METHOD_COUNT: usize = 7;
 
 /// A node in the Trie representing a path parameter (e.g., `:id`).
 struct ParamChild {
-    /// The name of the parameter (e.g., "id").
     name: Box<str>,
-    /// The Trie node that this parameter points to.
     node: Box<TrieNode>,
 }
 
 /// A node in the Trie representing a segment of a URL path.
 struct TrieNode {
-    /// Static path segments (e.g., "users", "api").
     children: HashMap<Box<str>, Box<TrieNode>>,
-    /// A dynamic path parameter segment (e.g., ":id").
     param_child: Option<ParamChild>,
-    /// Handlers mapped to specific HTTP methods for this specific node.
     handlers: [Option<HandlerFn>; METHOD_COUNT],
 }
 
@@ -80,13 +68,6 @@ impl TrieNode {
     }
 }
 
-/// A high-performance router that uses a Trie (prefix tree) for path matching.
-///
-/// It supports:
-/// - Static path segments.
-/// - Path parameters (e.g., `:user_id`).
-/// - Middleware execution chain.
-/// - HTTP method-based routing.
 pub struct Router {
     root: TrieNode,
     middlewares: Vec<MiddlewareFn>,
@@ -99,7 +80,6 @@ impl Default for Router {
 }
 
 impl Router {
-    /// Creates a new, empty `Router`.
     pub fn new() -> Self {
         Self {
             root: TrieNode::new(),
@@ -107,18 +87,11 @@ impl Router {
         }
     }
 
-    /// Registers a middleware function that will run for every request handled by this router.
-    pub fn use_middleware(
-        &mut self,
-        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
-    ) {
+    /// Registers a middleware function that runs for every request.
+    pub fn use_middleware(&mut self, middleware: fn(&Request, &mut Response, Next)) {
         self.middlewares.push(MiddlewareFn(middleware));
     }
 
-    /// Adds a route to the Trie.
-    ///
-    /// `path` segments starting with `:` are treated as dynamic parameters.
-    /// Example: `add_route(Method::Get, "/user/:id", my_handler)`
     pub fn add_route(&mut self, method: Method, path: &str, handler: HandlerFn) {
         let mut current = &mut self.root;
 
@@ -142,21 +115,14 @@ impl Router {
         current.handlers[method.index()] = Some(handler);
     }
 
-    /// Matches a request against the Trie and populates request parameters.
-    ///
-    /// This method strips query parameters before matching and populates
-    /// `request.params` with any dynamic segments found during traversal.
-    ///
-    /// Returns `Some(HandlerFn)` if a match is found, otherwise `None`.
     #[inline]
-    pub fn route<'a>(&'a self, request: &mut Request<'a>) -> Option<HandlerFn> {
+    pub fn route(&self, request: &mut Request) -> Option<HandlerFn> {
         let mut current = &self.root;
 
-        // Ignore query string for routing purposes
         let path = request
             .path
             .split_once('?')
-            .map_or(request.path, |(p, _)| p);
+            .map_or(&*request.path, |(p, _)| p);
 
         for part in path.split('/') {
             if part.is_empty() {
@@ -168,34 +134,41 @@ impl Router {
                     current = next;
                 }
                 None => {
-                    // If no static match, check if there is a dynamic parameter child
                     let param = current.param_child.as_ref()?;
-
-                    // Store the captured parameter in the request
-                    request.params.push((param.name.as_ref(), part));
-
+                    request.params.push((param.name.clone(), part.into()));
                     current = &param.node;
                 }
             }
         }
 
         let method: Method = request.method.parse().expect("Failed to parse method");
-
         current.handlers[method.index()]
     }
 
-    /// Entry point to process a request through the entire pipeline.
-    ///
-    /// This triggers the middleware chain, which eventually calls the provided `handler`.
-    pub fn handle<'a>(
-        &'a self,
-        request: &Request<'a>,
-        response: &mut Response<'a>,
-        handler: HandlerFn,
-    ) {
+    /// Entry point to process standard request handlers.
+    pub fn handle(&self, request: &Request, response: &mut Response, handler: HandlerFn) {
         let next = Next {
             rest: &self.middlewares,
-            handler,
+            handler: &handler,
+        };
+        next.run(request, response);
+    }
+
+    /// Entry point to process static file handlers through the middleware pipeline.
+    pub fn static_handle(
+        &self,
+        request: &Request,
+        response: &mut Response,
+        handler: HandlerStaticFn,
+        path: &Path,
+    ) {
+        let closure = |req: &Request, resp: &mut Response| {
+            handler(req, resp, path);
+        };
+
+        let next = Next {
+            rest: &self.middlewares,
+            handler: &closure,
         };
         next.run(request, response);
     }

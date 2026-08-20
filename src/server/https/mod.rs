@@ -1,4 +1,5 @@
 use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
+use crate::server::metadata::Metadata;
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace, warn};
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
@@ -31,8 +32,60 @@ pub enum TlsState {
 
 type SharedTlsState = Arc<Mutex<Option<TlsState>>>;
 
+// 1. Local wrapper struct to bypass the orphan rule
+#[derive(Clone)]
+pub struct TlsStreamHandle(pub Option<SharedTlsState>);
+
+// 2. Implement Write on the reference of our local wrapper struct
+impl Write for &TlsStreamHandle {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let shared = self.0.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotConnected, "TLS stream uninitialized")
+        })?;
+
+        let mut state = shared
+            .lock()
+            .map_err(|_| io::Error::other("TLS stream mutex poisoned"))?;
+
+        let tls_state = state
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "TLS state empty"))?;
+
+        match tls_state {
+            TlsState::Connected(stream) => stream.write(buf),
+            TlsState::Handshaking(_) => Err(io::ErrorKind::WouldBlock.into()),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let shared = self.0.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotConnected, "TLS stream uninitialized")
+        })?;
+
+        let mut state = shared
+            .lock()
+            .map_err(|_| io::Error::other("TLS stream mutex poisoned"))?;
+
+        let tls_state = state
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "TLS state empty"))?;
+
+        match tls_state {
+            TlsState::Connected(stream) => stream.flush(),
+            TlsState::Handshaking(_) => Ok(()),
+        }
+    }
+}
+
+// 3. Implement ConnectionStreamClone on the local wrapper struct
+impl ConnectionStreamClone for TlsStreamHandle {
+    fn clone_stream(&self) -> io::Result<Self> {
+        Ok(self.clone())
+    }
+}
+
 struct Connection {
-    metadata: ConnectionMetadata<Option<SharedTlsState>>,
+    metadata: ConnectionMetadata<TlsStreamHandle>,
     read_buf: Vec<u8>,
     write_buf: Vec<u8>,
 }
@@ -41,7 +94,7 @@ impl Connection {
     fn new(tls: TlsState) -> Self {
         Self {
             metadata: ConnectionMetadata {
-                stream: Some(Arc::new(Mutex::new(Some(tls)))),
+                stream: Arc::new(TlsStreamHandle(Some(Arc::new(Mutex::new(Some(tls)))))),
             },
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
@@ -52,6 +105,7 @@ impl Connection {
         let shared = self
             .metadata
             .stream
+            .0
             .as_ref()
             .expect("Stream should be initialized");
 
@@ -66,12 +120,6 @@ impl Connection {
     }
 }
 
-impl ConnectionStreamClone for Option<Arc<Mutex<Option<TlsState>>>> {
-    fn clone_stream(&self) -> io::Result<Self> {
-        Ok(self.clone())
-    }
-}
-
 enum WriteState {
     Continue,
     Done,
@@ -80,7 +128,7 @@ enum WriteState {
 
 pub struct Server {
     init_start: Instant,
-    listener: TcpListener,
+    listener: Option<TcpListener>,
     router: Arc<Router>,
     assets_path: PathBuf,
     acceptor: Arc<SslAcceptor>,
@@ -89,28 +137,21 @@ pub struct Server {
 
 impl Server {
     pub fn new() -> io::Result<Self> {
-        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+
         let port: u16 = std::env::var("PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(8443);
 
         let addr = format!("{}:{}", host, port);
-        // Pass &addr because new_with_assets expects &str
+
         Self::new_with_assets(&addr, PathBuf::from("./assets"))
     }
 
-    // We must update the listener, not just the string!
-    pub fn bind(&mut self, host: &str, port: u16) -> io::Result<&mut Self> {
-        let addr = format!("{}:{}", host, port);
-        let socket_addr = format!("{}:{}", host, port)
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        // Re-bind the actual listener
-        self.listener = TcpListener::bind(socket_addr)?;
-        self.addr = addr;
-        Ok(self)
+    pub fn bind(&mut self, host: &str, port: u16) -> &mut Self {
+        self.addr = format!("{}:{}", host, port);
+        self
     }
 
     pub fn assets_path(&mut self, path: &str) -> &mut Self {
@@ -122,35 +163,60 @@ impl Server {
         let init_start = Instant::now();
         let router = Arc::new(Router::new());
 
-        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+        // Validate the address, but DON'T bind the socket here.
+        addr.parse::<std::net::SocketAddr>()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-        match builder.set_private_key_file("key.pem", SslFiletype::PEM) {
-            Ok(_) => {}
-            Err(_) => {
-                error!("ERROR: Failed to load 'key.pem'");
-                panic!("Server initialization failed: 'key.pem' not found.");
-            }
-        }
+        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())
+            .map_err(|e| io::Error::other(format!("failed to create SSL acceptor: {}", e)))?;
 
-        match builder.set_certificate_chain_file("cert.pem") {
-            Ok(_) => {}
-            Err(_) => {
-                error!("ERROR: Failed to load 'cert.pem'");
-                panic!("Server initialization failed: 'cert.pem' not found.");
-            }
-        }
+        builder
+            .set_private_key_file("key.pem", SslFiletype::PEM)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("failed to load 'key.pem': {}", e),
+                )
+            })?;
+
+        builder
+            .set_certificate_chain_file("cert.pem")
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("failed to load 'cert.pem': {}", e),
+                )
+            })?;
+        let acceptor = builder.build();
 
         Ok(Server {
             init_start,
-            listener: TcpListener::bind(addr.parse::<std::net::SocketAddr>().unwrap())?,
+            listener: None,
             router,
             assets_path,
-            acceptor: Arc::new(builder.build()),
+            acceptor: Arc::new(acceptor),
             addr: addr.to_string(),
         })
     }
 
     pub fn run(&mut self) -> io::Result<()> {
+        // The socket is created ONLY when the server actually starts.
+        let listener = TcpListener::bind(&self.addr).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to bind HTTPS server to {}: {}", self.addr, e),
+            )
+        })?;
+
+        listener.set_nonblocking(true).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to set HTTPS listener to non-blocking mode: {}", e),
+            )
+        })?;
+
+        self.listener = Some(listener);
+
         self.run_loop()
     }
 
@@ -168,10 +234,7 @@ impl Server {
         self
     }
 
-    pub fn use_middleware(
-        &mut self,
-        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
-    ) -> &mut Self {
+    pub fn use_middleware(&mut self, middleware: fn(&Request, &mut Response, Next)) -> &mut Self {
         Arc::get_mut(&mut self.router)
             .expect("Cannot add middleware: Router is already shared across threads")
             .use_middleware(middleware);
@@ -192,7 +255,7 @@ impl Server {
                 return Ok(WriteState::Done);
             }
 
-            let shared = conn.metadata.stream.as_ref().ok_or_else(|| {
+            let shared = conn.metadata.stream.0.as_ref().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::NotConnected, "TLS stream is not initialized")
             })?;
 
@@ -243,12 +306,12 @@ impl Server {
         }
     }
 
-    fn handle_read(conn: &mut Connection, router: &Router, assets_path: &Path) -> io::Result<bool> {
+    fn handle_read(&mut self, conn: &mut Connection) -> io::Result<bool> {
         let mut buf = [0u8; 1024];
 
         loop {
             let read_result = {
-                let shared = conn.metadata.stream.as_ref().ok_or_else(|| {
+                let shared = conn.metadata.stream.0.as_ref().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::NotConnected, "TLS stream is not initialized")
                 })?;
 
@@ -298,32 +361,21 @@ impl Server {
                 request.method, request.path
             );
 
-            let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+            let metadata: Arc<dyn Metadata> = Arc::new(conn.metadata.clone());
+            let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
 
-            if let Some(handler_fn) = router.route(&mut request) {
-                // handler_fn(&request, &mut response);
-                // Execute route handler inside middleware chain
-                router.handle(&request, &mut response, handler_fn);
-            } else if let Some((content, content_type, etag, last_modified)) =
-                get_file_info(request.path, assets_path)
-            {
-                response.body(content);
-                response.content_type(content_type);
-                response.header("Cache-control", "public, max-age=3600");
-
-                if !etag.is_empty() {
-                    response.header("ETag", etag);
-                }
-
-                if !last_modified.is_empty() {
-                    response.header("Last-Modified", last_modified);
-                }
+            if let Some(handler_fn) = self.router.route(&mut request) {
+                self.router.handle(&request, &mut response, handler_fn);
             } else {
-                response.body("Not Found");
-                response.status(Status::NotFound);
+                // Execute route for static resoueces
+                self.router.static_handle(
+                    &request,
+                    &mut response,
+                    Self::static_handler,
+                    &self.assets_path, // Pass the static directory path
+                );
             }
 
-            // Prevent sending an empty body
             if response.body.is_empty() {
                 return Ok(true);
             }
@@ -342,8 +394,27 @@ impl Server {
         Ok(true)
     }
 
+    fn static_handler(req: &Request, res: &mut Response, path: &Path) {
+        if let Some((content, content_type, etag, last_modified)) = get_file_info(&req.path, path) {
+            res.body(content);
+            res.content_type(content_type);
+            res.header("Cache-control", "public, max-age=3600");
+
+            if !etag.is_empty() {
+                res.header("ETag", etag);
+            }
+
+            if !last_modified.is_empty() {
+                res.header("Last-Modified", last_modified);
+            }
+        } else {
+            res.body("Not Found");
+            res.status(Status::NotFound);
+        }
+    }
+
     fn continue_handshake(conn: &mut Connection) -> io::Result<bool> {
-        let shared = conn.metadata.stream.as_ref().ok_or_else(|| {
+        let shared = conn.metadata.stream.0.as_ref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotConnected, "TLS stream is not initialized")
         })?;
 
@@ -361,36 +432,40 @@ impl Server {
                 Ok(true)
             }
 
-            TlsState::Handshaking(mid) => {
-                match mid.handshake() {
-                    Ok(stream) => {
-                        debug!("TLS handshake completed successfully.");
-                        *state = Some(TlsState::Connected(stream));
-                        Ok(true)
-                    }
-
-                    Err(HandshakeError::WouldBlock(mid)) => {
-                        *state = Some(TlsState::Handshaking(mid));
-
-                        Ok(false)
-                    }
-
-                    Err(e) => {
-                        trace!("TLS handshake failed: {:?}", e);
-                        // Don't put a failed TLS state back.
-                        *state = None;
-                        Err(io::Error::other(format!("{:?}", e)))
-                    }
+            TlsState::Handshaking(mid) => match mid.handshake() {
+                Ok(stream) => {
+                    debug!("TLS handshake completed successfully.");
+                    *state = Some(TlsState::Connected(stream));
+                    Ok(true)
                 }
-            }
+
+                Err(HandshakeError::WouldBlock(mid)) => {
+                    *state = Some(TlsState::Handshaking(mid));
+                    Ok(false)
+                }
+
+                Err(e) => {
+                    trace!("TLS handshake failed: {:?}", e);
+                    *state = None;
+                    Err(io::Error::other(format!("{:?}", e)))
+                }
+            },
         }
     }
 
     fn run_loop(&mut self) -> io::Result<()> {
-        self.listener.set_nonblocking(true)?;
+        self.listener
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "listener has not been initialized",
+                )
+            })?
+            .set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {
-            fd: self.listener.as_raw_fd(),
+            fd: self.listener.as_ref().unwrap().as_raw_fd(),
             events: POLLIN,
             revents: 0,
         }];
@@ -401,7 +476,7 @@ impl Server {
 
         info!(
             "HTTPS server started on https://{} in {}µs",
-            self.listener.local_addr()?,
+            self.listener.as_ref().unwrap().local_addr()?,
             startup_us
         );
 
@@ -436,18 +511,15 @@ impl Server {
                 continue;
             }
 
-            // Accept HTTPS clients.
             if poll_fds[0].revents & POLLIN != 0 {
                 loop {
-                    match self.listener.accept() {
+                    match self.listener.as_ref().unwrap().accept() {
                         Ok((stream, addr)) => {
                             stream.set_nonblocking(true)?;
 
                             let tls_state = match self.acceptor.accept(stream) {
                                 Ok(ssl) => TlsState::Connected(ssl),
-
                                 Err(HandshakeError::WouldBlock(mid)) => TlsState::Handshaking(mid),
-
                                 Err(e) => {
                                     warn!("TLS handshake initialization failed: {:?}", e);
                                     continue;
@@ -499,7 +571,7 @@ impl Server {
 
                 if let Some(conn) = connections.get_mut(&fd) {
                     let handshaking = {
-                        let shared = match conn.metadata.stream.as_ref() {
+                        let shared = match conn.metadata.stream.0.as_ref() {
                             Some(shared) => shared,
                             None => {
                                 indices_to_remove.push(i);
@@ -551,8 +623,7 @@ impl Server {
 
                             Ok(WriteState::Close) => {
                                 debug!(
-                                    "Connection FD {} closed by remote peer \
-                                     (WriteState::Close)",
+                                    "Connection FD {} closed by remote peer (WriteState::Close)",
                                     fd
                                 );
                                 indices_to_remove.push(i);
@@ -566,7 +637,7 @@ impl Server {
                     }
 
                     if events & POLLIN != 0 {
-                        match Self::handle_read(conn, &self.router, &self.assets_path) {
+                        match self.handle_read(conn) {
                             Ok(true) => {
                                 if !conn.write_buf.is_empty() {
                                     item.events = POLLOUT;
@@ -575,8 +646,7 @@ impl Server {
 
                             Ok(false) => {
                                 debug!(
-                                    "Connection FD {} closed by remote peer \
-                                     (Read finished)",
+                                    "Connection FD {} closed by remote peer (Read finished)",
                                     fd
                                 );
                                 indices_to_remove.push(i);

@@ -1,6 +1,5 @@
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -11,8 +10,10 @@ use crate::response::{ContentType, Response, Status};
 use crate::router::Next;
 use crate::router::Router;
 use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
+use crate::server::metadata::Metadata;
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
+use std::io::{self, Read, Write};
 
 use std::sync::Arc;
 
@@ -23,17 +24,19 @@ struct PollFd {
     revents: i16,
 }
 
-struct Connection<TcpStream> {
-    metadata: ConnectionMetadata<TcpStream>,
-    read_buf: Vec<u8>,
-    write_buf: Vec<u8>,
+pub struct Connection<S> {
+    pub metadata: ConnectionMetadata<S>,
+    pub read_buf: Vec<u8>,
+    pub write_buf: Vec<u8>,
 }
 
 impl Connection<TcpStream> {
-    fn new(socket: TcpStream) -> io::Result<Self> {
+    pub fn new(socket: TcpStream) -> io::Result<Self> {
         socket.set_nonblocking(true)?;
         Ok(Self {
-            metadata: ConnectionMetadata { stream: socket },
+            metadata: ConnectionMetadata {
+                stream: Arc::new(socket),
+            },
             read_buf: Vec::with_capacity(1024),
             write_buf: Vec::new(),
         })
@@ -54,7 +57,7 @@ enum WriteState {
 
 pub struct Server {
     init_start: Instant,
-    listener: TcpListener,
+    listener: Option<TcpListener>,
     router: Arc<Router>,
     assets_path: PathBuf,
     addr: String,
@@ -62,28 +65,21 @@ pub struct Server {
 
 impl Server {
     pub fn new() -> io::Result<Self> {
-        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+
         let port: u16 = std::env::var("PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(8080);
 
         let addr = format!("{}:{}", host, port);
-        // Pass &addr because new_with_assets expects &str
+
         Self::new_with_assets(&addr, PathBuf::from("./assets"))
     }
 
-    // We must update the listener, not just the string!
-    pub fn bind(&mut self, host: &str, port: u16) -> io::Result<&mut Self> {
-        let addr = format!("{}:{}", host, port);
-        let socket_addr = format!("{}:{}", host, port)
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        // Re-bind the actual listener
-        self.listener = TcpListener::bind(socket_addr)?;
-        self.addr = addr;
-        Ok(self)
+    pub fn bind(&mut self, host: &str, port: u16) -> &mut Self {
+        self.addr = format!("{}:{}", host, port);
+        self
     }
 
     pub fn assets_path(&mut self, path: &str) -> &mut Self {
@@ -95,14 +91,13 @@ impl Server {
         let init_start = Instant::now();
         let router = Arc::new(Router::new());
 
-        // Parse the addr string into a SocketAddr for the listener
-        let socket_addr = addr
-            .parse::<std::net::SocketAddr>()
+        // Validate the address, but DO NOT bind the listener yet.
+        addr.parse::<std::net::SocketAddr>()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
         Ok(Server {
             init_start,
-            listener: TcpListener::bind(socket_addr)?,
+            listener: None,
             router,
             assets_path,
             addr: addr.to_string(),
@@ -111,6 +106,21 @@ impl Server {
 
     /// Run polling
     pub fn run(&mut self) -> io::Result<()> {
+        let listener = TcpListener::bind(&self.addr).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to bind server to {}: {}", self.addr, e),
+            )
+        })?;
+
+        listener.set_nonblocking(true).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to set listener to non-blocking mode: {}", e),
+            )
+        })?;
+
+        self.listener = Some(listener);
         self.run_loop()
     }
 
@@ -126,10 +136,7 @@ impl Server {
         self
     }
 
-    pub fn use_middleware(
-        &mut self,
-        middleware: for<'a, 'b, 'c> fn(&'b Request<'a>, &'c mut Response<'a>, Next<'a>),
-    ) -> &mut Self {
+    pub fn use_middleware(&mut self, middleware: fn(&Request, &mut Response, Next)) -> &mut Self {
         Arc::get_mut(&mut self.router)
             .expect("Cannot add middleware: Router is already shared across threads")
             .use_middleware(middleware);
@@ -150,7 +157,8 @@ impl Server {
                 return Ok(WriteState::Done);
             }
 
-            match conn.metadata.stream.write(&conn.write_buf) {
+            // Dereference the Arc (`&*`) to call Write::write on `&TcpStream`
+            match (&*conn.metadata.stream).write(&conn.write_buf) {
                 Ok(0) => {
                     // Ok(0) usually means the connection was closed by the remote peer
                     debug!("Socket closed by peer (EOF on write); state: Close");
@@ -180,31 +188,26 @@ impl Server {
         }
     }
 
-    fn handle_read(
-        conn: &mut Connection<TcpStream>,
-        router: &Router,
-        assets_path: &Path,
-    ) -> io::Result<bool> {
+    fn handle_read(&mut self, conn: &mut Connection<TcpStream>) -> io::Result<bool> {
         let mut buf = [0; 1024];
+
         loop {
-            match conn.metadata.stream.read(&mut buf) {
+            // Call .read(&mut buf) on the underlying stream
+            match (&*conn.metadata.stream).read(&mut buf) {
                 Ok(0) => {
-                    // A read of 0 bytes usually signifies the peer has closed the connection.
+                    // A read of 0 bytes signifies the remote peer closed the connection.
                     debug!("Connection closed by peer (EOF); state: Terminating");
                     return Ok(false);
                 }
                 Ok(n) => {
-                    // Log successful reads at debug level to track data influx without spamming logs.
                     debug!("Read {} bytes from socket", n);
                     conn.read_buf.extend_from_slice(&buf[..n]);
                 }
                 Err(ref err) if Self::would_block(err) => {
-                    // Expected behavior in non-blocking I/O; move to processing phase.
                     debug!("Read would block; returning control to event loop");
                     break;
                 }
                 Err(err) => {
-                    // Actual I/O error (e.g., ConnectionReset).
                     error!("Socket read error: {}", err);
                     return Err(err);
                 }
@@ -218,30 +221,22 @@ impl Server {
                 request.method, request.path
             );
 
-            let mut response = Response::new(&conn.metadata, Status::Ok, b"", ContentType::TEXT);
+            let metadata: Arc<dyn Metadata> = Arc::new(conn.metadata.clone());
 
-            if let Some(handler_fn) = router.route(&mut request) {
+            // Pass cloned Arc<dyn Metadata> instead of borrowed reference &conn.metadata
+            let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
+
+            if let Some(handler_fn) = self.router.route(&mut request) {
                 // Execute route handler inside middleware chain
-                router.handle(&request, &mut response, handler_fn);
+                self.router.handle(&request, &mut response, handler_fn);
             } else {
-                if let Some((content, content_type, etag, last_modified)) =
-                    get_file_info(request.path, assets_path)
-                {
-                    response.body(content);
-                    response.content_type(content_type);
-                    response.header("Cache-control", "public, max-age=3600");
-
-                    if !etag.is_empty() {
-                        response.header("ETag", etag);
-                    }
-
-                    if !last_modified.is_empty() {
-                        response.header("Last-Modified", last_modified);
-                    }
-                } else {
-                    response.body("Not Found");
-                    response.status(Status::NotFound);
-                }
+                // Execute route for static resoueces
+                self.router.static_handle(
+                    &request,
+                    &mut response,
+                    Self::static_handler,
+                    &self.assets_path, // Pass the static directory path
+                );
             }
 
             // Prevent sending an empty body
@@ -263,11 +258,38 @@ impl Server {
         Ok(true)
     }
 
+    fn static_handler(req: &Request, res: &mut Response, path: &Path) {
+        if let Some((content, content_type, etag, last_modified)) = get_file_info(&req.path, path) {
+            res.body(content);
+            res.content_type(content_type);
+            res.header("Cache-control", "public, max-age=3600");
+
+            if !etag.is_empty() {
+                res.header("ETag", etag);
+            }
+
+            if !last_modified.is_empty() {
+                res.header("Last-Modified", last_modified);
+            }
+        } else {
+            res.body("Not Found");
+            res.status(Status::NotFound);
+        }
+    }
+
     fn run_loop(&mut self) -> io::Result<()> {
-        self.listener.set_nonblocking(true)?;
+        self.listener
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "listener has not been initialized",
+                )
+            })?
+            .set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {
-            fd: self.listener.as_raw_fd(),
+            fd: self.listener.as_ref().unwrap().as_raw_fd(),
             events: POLLIN,
             revents: 0,
         }];
@@ -275,7 +297,7 @@ impl Server {
         let mut connections: HashMap<i32, Connection<TcpStream>> = HashMap::new();
 
         let startup_us = self.init_start.elapsed().as_micros();
-        let local_addr = self.listener.local_addr()?;
+        let local_addr = self.listener.as_ref().unwrap().local_addr()?;
 
         info!(
             "Server started on http://{} in {}µs",
@@ -316,7 +338,7 @@ impl Server {
             // Handle listener (index 0)
             if poll_fds[0].revents & POLLIN != 0 {
                 loop {
-                    match self.listener.accept() {
+                    match self.listener.as_ref().unwrap().accept() {
                         Ok((stream, addr)) => {
                             let fd = stream.as_raw_fd();
                             let conn = Connection::new(stream)?;
@@ -380,7 +402,8 @@ impl Server {
                 } else if revents & POLLIN != 0
                     && let Some(conn) = connections.get_mut(&fd)
                 {
-                    match Self::handle_read(conn, &self.router, &self.assets_path) {
+                    match self.handle_read(conn) {
+                        // match Self::handle_read(conn, &self.router, &self.assets_path) {
                         Ok(true) => {
                             if !conn.write_buf.is_empty() {
                                 item.events = POLLOUT;
