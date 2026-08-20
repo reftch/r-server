@@ -57,7 +57,7 @@ enum WriteState {
 
 pub struct Server {
     init_start: Instant,
-    listener: TcpListener,
+    listener: Option<TcpListener>,
     router: Arc<Router>,
     assets_path: PathBuf,
     addr: String,
@@ -66,27 +66,20 @@ pub struct Server {
 impl Server {
     pub fn new() -> io::Result<Self> {
         let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+
         let port: u16 = std::env::var("PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(8080);
 
         let addr = format!("{}:{}", host, port);
-        // Pass &addr because new_with_assets expects &str
+
         Self::new_with_assets(&addr, PathBuf::from("./assets"))
     }
 
-    // We must update the listener, not just the string!
-    pub fn bind(&mut self, host: &str, port: u16) -> io::Result<&mut Self> {
-        let addr = format!("{}:{}", host, port);
-        let socket_addr = format!("{}:{}", host, port)
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        // Re-bind the actual listener
-        self.listener = TcpListener::bind(socket_addr)?;
-        self.addr = addr;
-        Ok(self)
+    pub fn bind(&mut self, host: &str, port: u16) -> &mut Self {
+        self.addr = format!("{}:{}", host, port);
+        self
     }
 
     pub fn assets_path(&mut self, path: &str) -> &mut Self {
@@ -98,14 +91,13 @@ impl Server {
         let init_start = Instant::now();
         let router = Arc::new(Router::new());
 
-        // Parse the addr string into a SocketAddr for the listener
-        let socket_addr = addr
-            .parse::<std::net::SocketAddr>()
+        // Validate the address, but DO NOT bind the listener yet.
+        addr.parse::<std::net::SocketAddr>()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
         Ok(Server {
             init_start,
-            listener: TcpListener::bind(socket_addr)?,
+            listener: None,
             router,
             assets_path,
             addr: addr.to_string(),
@@ -114,6 +106,21 @@ impl Server {
 
     /// Run polling
     pub fn run(&mut self) -> io::Result<()> {
+        let listener = TcpListener::bind(&self.addr).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to bind server to {}: {}", self.addr, e),
+            )
+        })?;
+
+        listener.set_nonblocking(true).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to set listener to non-blocking mode: {}", e),
+            )
+        })?;
+
+        self.listener = Some(listener);
         self.run_loop()
     }
 
@@ -268,10 +275,18 @@ impl Server {
     }
 
     fn run_loop(&mut self) -> io::Result<()> {
-        self.listener.set_nonblocking(true)?;
+        self.listener
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "listener has not been initialized",
+                )
+            })?
+            .set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {
-            fd: self.listener.as_raw_fd(),
+            fd: self.listener.as_ref().unwrap().as_raw_fd(),
             events: POLLIN,
             revents: 0,
         }];
@@ -279,7 +294,7 @@ impl Server {
         let mut connections: HashMap<i32, Connection<TcpStream>> = HashMap::new();
 
         let startup_us = self.init_start.elapsed().as_micros();
-        let local_addr = self.listener.local_addr()?;
+        let local_addr = self.listener.as_ref().unwrap().local_addr()?;
 
         info!(
             "Server started on http://{} in {}µs",
@@ -320,7 +335,7 @@ impl Server {
             // Handle listener (index 0)
             if poll_fds[0].revents & POLLIN != 0 {
                 loop {
-                    match self.listener.accept() {
+                    match self.listener.as_ref().unwrap().accept() {
                         Ok((stream, addr)) => {
                             let fd = stream.as_raw_fd();
                             let conn = Connection::new(stream)?;

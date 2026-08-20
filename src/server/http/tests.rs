@@ -26,10 +26,11 @@ mod tests {
 
         // Use port 0 to let the OS assign a free port
         let mut server = Server::new()?;
-        server.bind("127.0.0.1", 0)?;
+        server.bind("127.0.0.1", 0);
         server.route(Method::GET, "/", hello_handler);
+        server.run()?;
 
-        let addr = server.listener.local_addr().unwrap();
+        let addr = server.listener.as_ref().unwrap().local_addr().unwrap();
         thread::spawn(move || {
             if let Err(e) = server.run() {
                 eprintln!("Server error: {}", e);
@@ -76,14 +77,16 @@ mod tests {
     }
 
     #[test]
-    fn test_server_404() {
+    fn test_server_404() -> Result<(), Box<dyn std::error::Error>> {
         let _guard = TEST_LOCK.lock().unwrap();
         logger::set_level(LogLevel::None);
 
         let mut server = Server::new().unwrap();
-        server.bind("127.0.0.1", 0).unwrap();
+        server.bind("127.0.0.1", 0);
         server.route(Method::GET, "/", hello_handler);
-        let addr = server.listener.local_addr().unwrap();
+        server.run()?;
+
+        let addr = server.listener.as_ref().unwrap().local_addr().unwrap();
 
         thread::spawn(move || {
             let _ = server.run();
@@ -120,5 +123,7 @@ mod tests {
 
         let response_str = String::from_utf8_lossy(&buffer);
         assert!(response_str.contains("404 Not Found"));
+
+        Ok(())
     }
 }

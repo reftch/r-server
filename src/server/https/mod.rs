@@ -128,7 +128,7 @@ enum WriteState {
 
 pub struct Server {
     init_start: Instant,
-    listener: TcpListener,
+    listener: Option<TcpListener>,
     router: Arc<Router>,
     assets_path: PathBuf,
     acceptor: Arc<SslAcceptor>,
@@ -138,24 +138,20 @@ pub struct Server {
 impl Server {
     pub fn new() -> io::Result<Self> {
         let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+
         let port: u16 = std::env::var("PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(8443);
 
         let addr = format!("{}:{}", host, port);
+
         Self::new_with_assets(&addr, PathBuf::from("./assets"))
     }
 
-    pub fn bind(&mut self, host: &str, port: u16) -> io::Result<&mut Self> {
-        let addr = format!("{}:{}", host, port);
-        let socket_addr = format!("{}:{}", host, port)
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        self.listener = TcpListener::bind(socket_addr)?;
-        self.addr = addr;
-        Ok(self)
+    pub fn bind(&mut self, host: &str, port: u16) -> &mut Self {
+        self.addr = format!("{}:{}", host, port);
+        self
     }
 
     pub fn assets_path(&mut self, path: &str) -> &mut Self {
@@ -167,35 +163,64 @@ impl Server {
         let init_start = Instant::now();
         let router = Arc::new(Router::new());
 
-        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+        // Validate the address, but DON'T bind the socket here.
+        addr.parse::<std::net::SocketAddr>()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-        match builder.set_private_key_file("key.pem", SslFiletype::PEM) {
-            Ok(_) => {}
-            Err(_) => {
-                error!("ERROR: Failed to load 'key.pem'");
-                panic!("Server initialization failed: 'key.pem' not found.");
-            }
-        }
+        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("failed to create SSL acceptor: {}", e),
+            )
+        })?;
 
-        match builder.set_certificate_chain_file("cert.pem") {
-            Ok(_) => {}
-            Err(_) => {
-                error!("ERROR: Failed to load 'cert.pem'");
-                panic!("Server initialization failed: 'cert.pem' not found.");
-            }
-        }
+        builder
+            .set_private_key_file("key.pem", SslFiletype::PEM)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("failed to load 'key.pem': {}", e),
+                )
+            })?;
+
+        builder
+            .set_certificate_chain_file("cert.pem")
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("failed to load 'cert.pem': {}", e),
+                )
+            })?;
+        let acceptor = builder.build();
 
         Ok(Server {
             init_start,
-            listener: TcpListener::bind(addr.parse::<std::net::SocketAddr>().unwrap())?,
+            listener: None,
             router,
             assets_path,
-            acceptor: Arc::new(builder.build()),
+            acceptor: Arc::new(acceptor),
             addr: addr.to_string(),
         })
     }
 
     pub fn run(&mut self) -> io::Result<()> {
+        // The socket is created ONLY when the server actually starts.
+        let listener = TcpListener::bind(&self.addr).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to bind HTTPS server to {}: {}", self.addr, e),
+            )
+        })?;
+
+        listener.set_nonblocking(true).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to set HTTPS listener to non-blocking mode: {}", e),
+            )
+        })?;
+
+        self.listener = Some(listener);
+
         self.run_loop()
     }
 
@@ -423,10 +448,18 @@ impl Server {
     }
 
     fn run_loop(&mut self) -> io::Result<()> {
-        self.listener.set_nonblocking(true)?;
+        self.listener
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "listener has not been initialized",
+                )
+            })?
+            .set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {
-            fd: self.listener.as_raw_fd(),
+            fd: self.listener.as_ref().unwrap().as_raw_fd(),
             events: POLLIN,
             revents: 0,
         }];
@@ -437,7 +470,7 @@ impl Server {
 
         info!(
             "HTTPS server started on https://{} in {}µs",
-            self.listener.local_addr()?,
+            self.listener.as_ref().unwrap().local_addr()?,
             startup_us
         );
 
@@ -474,7 +507,7 @@ impl Server {
 
             if poll_fds[0].revents & POLLIN != 0 {
                 loop {
-                    match self.listener.accept() {
+                    match self.listener.as_ref().unwrap().accept() {
                         Ok((stream, addr)) => {
                             stream.set_nonblocking(true)?;
 
