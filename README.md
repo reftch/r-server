@@ -9,10 +9,15 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 - **Middleware**: Pluggable request pipeline via `fn(&Request, &mut Response, Next)`, chained with `use_middleware` to run logic (logging, timing, auth) for every request before it reaches the handler.
 - **Static File Serving**: Built-in support for serving assets from a designated directory with automatic MIME type detection.
 - **Modular Architecture**: Separated into specialized modules for requests, responses, routing, and server logic.
+- **Client**: A HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests. It supports both HTTP and HTTPS via SSL/TLS.
 
 ## Project Structure
 
 The project is organized into several core crates:
+
+### `client`
+
+Handles client requests to a different endpoint.
 
 ### `request`
 
@@ -29,31 +34,6 @@ Implements a high-performance Trie-based router that supports both static paths 
 ### `server`
 
 The core engine managing TCP listeners, non-blocking I/O via system polling, and orchestrating the request-response lifecycle.
-
-### `client`
-
-A simple HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests. It supports both HTTP and HTTPS via SSL/TLS.
-
-#### Usage Example
-
-```rust
-use r_server::client::Client;
-
-fn main() -> std::io::Result<()> {
-    let client = Client::new("https://api.example.com");
-
-    // GET request
-    let body = client.get("/api/v1/resource").unwrap();
-    println!("Response: {}", body);
-
-    // POST request
-    let post_body = r#"{"key": "value"}"#.to_string();
-    let post_response = client.post("/api/v1/resource", post_body).unwrap();
-    println!("POST Response: {}", post_response);
-
-    Ok(())
-}
-```
 
 ### `sslserver`
 
@@ -74,22 +54,18 @@ Provides shared utility functions such as environment variable parsing with defa
 Here is a comprehensive example demonstrating how to initialize the server, configure static assets, add dynamic routes, and construct responses:
 
 ```rust
-use r_server::{response, router::Method, server::Server};
-use std::io;
+use r_server::server::http::Server;
 
-fn main() -> io::Result<()> {
-    let mut server = Server::new()?;
-
-    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
-        if let Some(id) = req.param("id") {
-            res.content_type(response::ContentType::JSON)
-                .body(format!("{{\"value\":{}}}", id));
-        }
-    });
-
-    server.run()?;
+fn main() -> std::io::Result<()> {
+    Server::new()?.run()?;
     Ok(())
 }
+```
+
+As a result server will started with default host (127.0.0.1) and port (8080) values:
+
+```sh
+[2026-08-21 06:54:36.524] [INFO] [r_server::server::http] - Server started on http://127.0.0.1:8080 in 18µs
 ```
 
 ### HTTPS (SSL/TLS)
@@ -100,92 +76,82 @@ To use the `sslserver`, you need to provide `key.pem` and `cert.pem` in your wor
 openssl req -x509 -noenc -keyout key.pem -out cert.pem -subj /CN=0.0.0.0
 ```
 
-The usage pattern is nearly identical, but you use the `sslserver::Server` instead of `server::Server`:
+The usage pattern is nearly identical, but you use the `server::https::Server` instead of `server::http::Server`:
 
 ```rust
-use r_server::{response, router::Method, sslserver::Server};
-use std::io;
+use r_server::server::https::Server;
 
 fn main() -> std::io::Result<()> {
-    let mut server = Server::new()?;
-
-    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
-        if let Some(id) = req.param("id") {
-            res.content_type(response::ContentType::JSON)
-                .body(format!("{{\"value\":{}}}", id));
-        }
-    });
-
-    server.run()?;
+    Server::new()?.run()?;
     Ok(())
 }
 ```
 
-To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore self-signed certificate warnings):
+As a result server will started with default host (127.0.0.1) and port (8443) values:
 
-```bash
-curl -k https://localhost:8443/api/v1/inc/100
+```sh
+[2026-08-21 06:54:36.524] [INFO] [r_server::server::http] - HTTPS server started on https://127.0.0.1:8443 in 1250µs
 ```
 
 To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore self-signed certificate warnings):
 
 ```bash
-curl -k https://localhost:8443/api/v1/inc/100
+curl -k https://localhost:8443
 ```
 
 ### `bind(...)`
 
-Both the HTTP (`server::Server`) and HTTPS (`sslserver::Server`) servers expose an identical `bind(host, port)`
+Both the HTTP (`server::http::Server`) and HTTPS (`server::https::Server`) servers expose an identical `bind(host, port)`
 method. It re-binds the underlying `TcpListener` to the supplied `host` and `port` and returns a `&mut Self`, so it can be chained before `run()`.
 
 By default, when no `bind` call is made, the servers use the `HOST`/`PORT` environment variables, falling back to:
 
-- **HTTP** (`server::Server`): `0.0.0.0:8080`
-- **HTTPS** (`sslserver::Server`): `0.0.0.0:8443`
+- **HTTP** (`server::Server`): `127.0.0.1:8080`
+- **HTTPS** (`sslserver::Server`): `127.0.0.1:8443`
 
 Calling `bind` overrides this default address.
 
 ```rust
-use r_server::{response, router::Method, server::Server};
-use std::io;
+use r_server::server::http::Server;
 
-fn main() -> io::Result<()> {
-    let mut server = Server::new()?;
-
-    // Override the listening address instead of the default (0.0.0.0:8080 for HTTP).
-    server.bind("127.0.0.1", 3000)?;
-
-    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
-        if let Some(id) = req.param("id") {
-            res.content_type(response::ContentType::JSON)
-                 .body(format!("{{\"value\":{}}}", id));
-         }
-     });
-
-    server.run()?;
+fn main() -> std::io::Result<()> {
+    Server::new()?.bind("0.0.0.0", 8080).run()?;
     Ok(())
 }
 ```
 
-For HTTPS the call is identical — only the import changes — and it overrides the `0.0.0.0:8443` default:
+For HTTPS the call is identical — only the import changes — and it overrides the `127.0.0.1:8443` default:
 
 ```rust
-use r_server::{response, router::Method, sslserver::Server};
-use std::io;
+use r_server::server::https::Server;
 
 fn main() -> std::io::Result<()> {
-    let mut server = Server::new()?;
+    Server::new()?.bind("0.0.0.0", 8080).run()?;
+    Ok(())
+}
+```
 
-    server.bind("127.0.0.1", 8443)?;
+### Client
 
-    server.route(Method::GET, "/api/v1/users/:id", |req, res| {
-        if let Some(id) = req.param("id") {
-            res.content_type(response::ContentType::JSON)
-                 .body(format!("{{\"value\":{}}}", id));
-         }
-     });
+A simple HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests. It supports both HTTP and HTTPS via SSL/TLS.
 
-    server.run()?;
+#### Usage Example
+
+```rust
+use r_server::client::Client;
+
+fn main() -> std::io::Result<()> {
+    let client = Client::new("https://api.example.com");
+
+    // GET request
+    let body = client.get("/api/v1/resource").unwrap();
+    println!("Response: {}", body);
+
+    // POST request
+    let post_body = r#"{"key": "value"}"#.to_string();
+    let post_response = client.post("/api/v1/resource", post_body).unwrap();
+    println!("POST Response: {}", post_response);
+
     Ok(())
 }
 ```
@@ -212,10 +178,11 @@ use r_server::{
 
 // A middleware that logs each request with its elapsed handling time.
 fn logger(req: &Request, res: &mut Response, next: Next) {
+    // pre- actions
     let start = std::time::Instant::now();
-
+    // handling request
     next.run(req, res);
-
+    // post- actions
     info!("{} {} - {:?}", req.method, req.path, start.elapsed());
 }
 
@@ -230,25 +197,34 @@ fn main() -> std::io::Result<()> {
                    .body(format!("{{\"value\":{}}}", id));
             }
         })
-        .assets_path("./examples/html/assets")
         .run()?;
 
     Ok(())
 }
 ```
 
+### Static resources
+
+By default server try to find local directory `assets` and find there index.html. For example:
+
+| Directory                            | Path                                 |
+| ------------------------------------ | ------------------------------------ |
+| `./assets/index.html`                | http://localhost:8080                |
+| `./assets/home/index.html`           | http://localhost:8080/home           |
+| `./assets/home/dashboard/index.html` | http://localhost:8080/home/dashboard |
+
 ## API Reference Summary
 
 ### `Server`
 
-| Method                              | Description                                                   |
-| ----------------------------------- | ------------------------------------------------------------- |
-| `new() -> IoResult<Self>` | Creates a new server instance. Reads `HOST`/`PORT` env vars, defaulting to `0.0.0.0:8080` for the HTTP server and `0.0.0.0:8443` for the HTTPS server. |
-| `bind(host: &str, port: u16)`         | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction. |
-| `assets_path(path: &str)`             | Sets the directory for serving static files.                    |
-| `route(method, path, handler)`       | Registers a new route with a specific HTTP method and path.    |
-| `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`. |
-| `run() -> IoResult<()>`              | Starts the asynchronous event loop.                            |
+| Method                                              | Description                                                                                                                                                                                                            |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new() -> IoResult<Self>`                           | Creates a new server instance. Reads `HOST`/`PORT` env vars, defaulting to `0.0.0.0:8080` for the HTTP server and `0.0.0.0:8443` for the HTTPS server.                                                                 |
+| `bind(host: &str, port: u16)`                       | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction. |
+| `assets_path(path: &str)`                           | Sets the directory for serving static files.                                                                                                                                                                           |
+| `route(method, path, handler)`                      | Registers a new route with a specific HTTP method and path.                                                                                                                                                            |
+| `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                              |
+| `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                    |
 
 ### `Response` (Builder Pattern)
 

@@ -300,7 +300,7 @@ impl Server {
         let local_addr = self.listener.as_ref().unwrap().local_addr()?;
 
         info!(
-            "Server started on http://{} in {}µs",
+            "HTTP server started on http://{} in {}µs",
             local_addr, startup_us
         );
 
