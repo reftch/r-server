@@ -1,0 +1,6 @@
+[package]
+name = "client"
+edition = "2024"
+
+[dependencies]
+r-server = { path = "../.." }

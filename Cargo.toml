@@ -32,3 +32,15 @@ panic = "abort"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "examples/client",
+    "examples/http",
+    "examples/https",
+    "examples/middleware",
+    "examples/rest",
+    "examples/static",
+]

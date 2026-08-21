@@ -1,0 +1,6 @@
+[package]
+name = "http"
+edition = "2024"
+
+[dependencies]
+r-server = { path = "../.." }

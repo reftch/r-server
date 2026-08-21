@@ -1,21 +1,14 @@
-use r_server::{logger, response, router::Method, server::http::Server, task};
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
+use r_server::{router::Method, server::http::Server, task};
+
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn main() -> std::io::Result<()> {
-    r_server::logger::set_level(logger::LogLevel::Info);
-
     Server::new()?
-        .route(Method::GET, "/api/v1/users/:id", |req, res| {
-            if let Some(id) = req.param("id") {
-                res.content_type(response::ContentType::JSON)
-                    .body(format!("{{\"value\":{}}}", id));
-            }
-        })
         .route(Method::GET, "/stream", |req, res| {
             task::repeat_every(
                 req.path.to_string(), // Converts Box<str> / &str to String
@@ -29,8 +22,8 @@ fn main() -> std::io::Result<()> {
                 },
             );
         })
-        .assets_path("./examples/html/assets")
+        .bind("0.0.0.0", 8080)
+        .assets_path("./examples/static/assets")
         .run()?;
-
     Ok(())
 }
