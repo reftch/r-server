@@ -1,4 +1,4 @@
-use crate::server::connection::ConnectionMetadata;
+use crate::core::connection::ConnectionMetadata;
 use std::io::Write;
 
 pub trait Metadata: Send + Sync {

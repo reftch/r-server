@@ -1,5 +1,5 @@
-use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
-use crate::server::metadata::Metadata;
+use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
+use crate::core::metadata::Metadata;
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace, warn};
 use libc::{POLLERR, POLLHUP, POLLIN, POLLOUT};

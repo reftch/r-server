@@ -1,8 +1,8 @@
 use r_server::{
+    core::http::Server,
     request::Request,
     response::{self, Response},
     router::Method,
-    server::http::Server,
 };
 
 fn hello_handler(_req: &Request, res: &mut Response) {

@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use r_server::{router::Method, server::http::Server, task};
+use r_server::{core::http::Server, router::Method, task};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -22,7 +22,6 @@ fn main() -> std::io::Result<()> {
                 },
             );
         })
-        .bind("0.0.0.0", 8080)
         .assets_path("./examples/static/assets")
         .run()?;
     Ok(())

@@ -1,9 +1,9 @@
 use r_server::{
+    core::http::Server,
     info,
     request::Request,
     response::{self, Response},
     router::{Method, Next},
-    server::http::Server,
 };
 
 fn logger(req: &Request, res: &mut Response, next: Next) {

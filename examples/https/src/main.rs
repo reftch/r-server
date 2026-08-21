@@ -1,4 +1,4 @@
-use r_server::server::https::Server;
+use r_server::core::https::Server;
 
 fn main() -> std::io::Result<()> {
     Server::new()?.run()?;

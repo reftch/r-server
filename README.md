@@ -54,7 +54,7 @@ Provides shared utility functions such as environment variable parsing with defa
 Here is a comprehensive example demonstrating how to initialize the server, configure static assets, add dynamic routes, and construct responses:
 
 ```rust
-use r_server::server::http::Server;
+use r_server::core::http::Server;
 
 fn main() -> std::io::Result<()> {
     Server::new()?.run()?;
@@ -65,7 +65,7 @@ fn main() -> std::io::Result<()> {
 As a result server will started with default host (127.0.0.1) and port (8080) values:
 
 ```sh
-[2026-08-21 06:54:36.524] [INFO] [r_server::server::http] - Server started on http://127.0.0.1:8080 in 18µs
+[2026-08-21 06:54:36.524] [INFO] [r_server::core::http] - Server started on http://127.0.0.1:8080 in 18µs
 ```
 
 ### HTTPS (SSL/TLS)
@@ -79,7 +79,7 @@ openssl req -x509 -noenc -keyout key.pem -out cert.pem -subj /CN=0.0.0.0
 The usage pattern is nearly identical, but you use the `server::https::Server` instead of `server::http::Server`:
 
 ```rust
-use r_server::server::https::Server;
+use r_server::core::https::Server;
 
 fn main() -> std::io::Result<()> {
     Server::new()?.run()?;
@@ -90,7 +90,7 @@ fn main() -> std::io::Result<()> {
 As a result server will started with default host (127.0.0.1) and port (8443) values:
 
 ```sh
-[2026-08-21 06:54:36.524] [INFO] [r_server::server::http] - HTTPS server started on https://127.0.0.1:8443 in 1250µs
+[2026-08-21 06:54:36.524] [INFO] [r_server::core::http] - HTTPS server started on https://127.0.0.1:8443 in 1250µs
 ```
 
 To connect to the HTTPS server, you can use `curl` with the `-k` flag (to ignore self-signed certificate warnings):
@@ -112,7 +112,7 @@ By default, when no `bind` call is made, the servers use the `HOST`/`PORT` envir
 Calling `bind` overrides this default address.
 
 ```rust
-use r_server::server::http::Server;
+use r_server::core::http::Server;
 
 fn main() -> std::io::Result<()> {
     Server::new()?.bind("0.0.0.0", 8080).run()?;
@@ -123,7 +123,7 @@ fn main() -> std::io::Result<()> {
 For HTTPS the call is identical — only the import changes — and it overrides the `127.0.0.1:8443` default:
 
 ```rust
-use r_server::server::https::Server;
+use r_server::core::https::Server;
 
 fn main() -> std::io::Result<()> {
     Server::new()?.bind("0.0.0.0", 8080).run()?;
@@ -173,7 +173,7 @@ use r_server::{
     request::Request,
     response::{self, Response},
     router::{Method, Next},
-    server::Server,
+    core::Server,
 };
 
 // A middleware that logs each request with its elapsed handling time.

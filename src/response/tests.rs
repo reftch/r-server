@@ -1,12 +1,12 @@
 use crate::response::stream::StreamWriter;
 use crate::response::{ContentType, Response, Status};
-use crate::server::connection::{ConnectionMetadata, ConnectionStreamClone};
+use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
 use std::io;
 use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 mod tests {
-    use crate::server::metadata::Metadata;
+    use crate::core::metadata::Metadata;
 
     use super::*;
 

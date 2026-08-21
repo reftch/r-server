@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     response::{ContentType, Response, Status},
-    server::metadata::Metadata,
+    core::metadata::Metadata,
 };
 
 type Cancel = Arc<AtomicBool>;
