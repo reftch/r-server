@@ -1,3 +1,5 @@
+pub mod multipart;
+
 use memchr::memchr;
 
 /// Represents an HTTP request without lifetime annotations.

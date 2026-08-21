@@ -5,12 +5,12 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
+use crate::core::metadata::Metadata;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Next;
 use crate::router::Router;
-use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
-use crate::core::metadata::Metadata;
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
 use std::io::{self, Read, Write};
