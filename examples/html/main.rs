@@ -30,7 +30,6 @@ fn main() -> std::io::Result<()> {
             );
         })
         .assets_path("./examples/html/assets")
-        .bind("127.0.0.1", 8082)
         .run()?;
 
     Ok(())

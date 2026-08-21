@@ -1,4 +1,4 @@
-ARG ARTIFACT=html
+ARG ARTIFACT=rest
 
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries
@@ -34,15 +34,15 @@ FROM scratch
 ARG ARTIFACT
 
 # Copy SSL certificates for HTTPS support
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt \
-    /etc/ssl/certs/ca-certificates.crt
+# COPY --from=builder /etc/ssl/certs/ca-certificates.crt \
+    # /etc/ssl/certs/ca-certificates.crt
 
 # COPY --from=builder /app/cert.pem /cert.pem
 # COPY --from=builder /app/key.pem /key.pem
 
 # Copy the statically linked binary
 COPY --from=builder /application /application
-COPY --from=builder /app/examples/$ARTIFACT/assets /assets
+# COPY --from=builder /app/examples/$ARTIFACT/assets /assets
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
