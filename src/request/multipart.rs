@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 
+use memchr::memchr;
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct MultipartField {
     pub name: String,
@@ -24,7 +26,11 @@ fn get_header_ignore_case<'a>(
 /// and extracts the boundary parameter if present.
 pub fn extract_multipart_boundary(headers: &HashMap<String, String>) -> Option<String> {
     let content_type = get_header_ignore_case(headers, "content-type")?;
+    extract_boundary_from_content_type(content_type)
+}
 
+/// Extracts the boundary parameter from a raw Content-Type value.
+pub fn extract_boundary_from_content_type(content_type: &str) -> Option<String> {
     let first_part = content_type.split(';').next()?.trim();
     if !first_part.eq_ignore_ascii_case("multipart/form-data") {
         return None;
@@ -32,12 +38,12 @@ pub fn extract_multipart_boundary(headers: &HashMap<String, String>) -> Option<S
 
     for param in content_type.split(';').skip(1) {
         let trimmed = param.trim();
-        if let Some((key, val)) = trimmed.split_once('=') {
-            if key.trim().eq_ignore_ascii_case("boundary") {
-                let boundary_val = val.trim().trim_matches('"');
-                if !boundary_val.is_empty() {
-                    return Some(boundary_val.to_string());
-                }
+        if let Some((key, val)) = trimmed.split_once('=')
+            && key.trim().eq_ignore_ascii_case("boundary")
+        {
+            let boundary_val = val.trim().trim_matches('"');
+            if !boundary_val.is_empty() {
+                return Some(boundary_val.to_string());
             }
         }
     }
@@ -159,6 +165,21 @@ fn read_part_body<R: BufRead>(
     delimiter.extend_from_slice(b"\r\n");
     delimiter.extend_from_slice(boundary_bytes);
 
+    // Tolerate parts whose body is empty and are immediately followed by a
+    // boundary line without the usual preceding CRLF (lenient mode).
+    {
+        let available = reader.fill_buf().map_err(|e| e.to_string())?;
+        if bare_boundary_follows(available, boundary_bytes) {
+            reader.consume(boundary_bytes.len());
+            return Ok((data, read_boundary_suffix(reader)?));
+        }
+    }
+
+    // Number of leading delimiter bytes currently matched. Bytes matched so
+    // far are held back from `data` until the match either completes or fails,
+    // which keeps matching correct across buffer boundaries of any size.
+    let mut matched = 0usize;
+
     loop {
         let available = match reader.fill_buf() {
             Ok(buf) if !buf.is_empty() => buf,
@@ -166,79 +187,79 @@ fn read_part_body<R: BufRead>(
             Err(e) => return Err(e.to_string()),
         };
 
-        // Standard case: full delimiter is visible in current buffer slice
-        if available.len() >= delimiter.len() {
-            if available.starts_with(&delimiter) {
-                reader.consume(delimiter.len());
+        let mut scanned = 0usize;
+        let mut boundary_hit = false;
 
-                let mut suffix = Vec::new();
-                let _ = reader.read_until(b'\n', &mut suffix);
-                let trimmed = trim_newline(&suffix);
-                let is_closing = trimmed.starts_with(b"--");
-
-                return Ok((data, is_closing));
-            }
-        }
-
-        // Search for possible delimiter start (\r)
-        if let Some(pos) = available.iter().position(|&b| b == b'\r') {
-            if pos > 0 {
-                // Safely stream everything up to the first candidate \r
-                data.extend_from_slice(&available[..pos]);
-                reader.consume(pos);
-            } else {
-                // \r is at position 0. Check how much of delimiter we can match in current buffer
-                let match_len = available.len().min(delimiter.len());
-                if delimiter.starts_with(&available[..match_len]) {
-                    if available.len() >= delimiter.len() {
-                        // Full match checked and failed above, so move 1 byte forward
-                        data.push(available[0]);
-                        reader.consume(1);
-                    } else {
-                        // Partial match at end of current buffer.
-                        // Read 1 byte to force buffer fill without corrupting position state
-                        let byte = available[0];
-                        reader.consume(1);
-
-                        // Peeking next byte after consume
-                        let next_buf = match reader.fill_buf() {
-                            Ok(buf) => buf,
-                            Err(e) => return Err(e.to_string()),
-                        };
-
-                        // Reconstruct lookahead
-                        let mut check = Vec::with_capacity(1 + next_buf.len());
-                        check.push(byte);
-                        check.extend_from_slice(next_buf);
-
-                        if check.starts_with(&delimiter) {
-                            // Boundary hit! Consume remaining delimiter bytes
-                            reader.consume(delimiter.len() - 1);
-
-                            let mut suffix = Vec::new();
-                            let _ = reader.read_until(b'\n', &mut suffix);
-                            let trimmed = trim_newline(&suffix);
-                            let is_closing = trimmed.starts_with(b"--");
-
-                            return Ok((data, is_closing));
-                        }
-
-                        // Not a boundary match: push byte to body data and continue
-                        data.push(byte);
+        while scanned < available.len() {
+            // Fast path: while nothing is pending, bulk-emit up to the next
+            // '\r', the only byte that can start the delimiter.
+            if matched == 0 {
+                match memchr(b'\r', &available[scanned..]) {
+                    Some(rel) => {
+                        data.extend_from_slice(&available[scanned..scanned + rel]);
+                        scanned += rel + 1;
+                        matched = 1;
                     }
+                    None => {
+                        data.extend_from_slice(&available[scanned..]);
+                        scanned = available.len();
+                    }
+                }
+                continue;
+            }
+
+            let byte = available[scanned];
+            scanned += 1;
+
+            if byte == delimiter[matched] {
+                matched += 1;
+                if matched == delimiter.len() {
+                    boundary_hit = true;
+                    break;
+                }
+            } else {
+                // Mismatch: flush the held-back prefix into the payload, then
+                // emit (or re-hold) the current byte.
+                data.extend_from_slice(&delimiter[..matched]);
+                if byte == delimiter[0] {
+                    matched = 1;
                 } else {
-                    // \r was present but did not match delimiter prefix
-                    data.push(available[0]);
-                    reader.consume(1);
+                    matched = 0;
+                    data.push(byte);
                 }
             }
-        } else {
-            // No \r found in buffer at all; safely consume whole buffer
-            let len = available.len();
-            data.extend_from_slice(available);
-            reader.consume(len);
+        }
+
+        reader.consume(scanned);
+
+        if boundary_hit {
+            return Ok((data, read_boundary_suffix(reader)?));
         }
     }
+}
+
+/// Checks whether the buffered slice begins a bare boundary line
+/// ("--boundary", optionally followed by "--") without a preceding CRLF.
+fn bare_boundary_follows(available: &[u8], boundary_bytes: &[u8]) -> bool {
+    if !available.starts_with(boundary_bytes) {
+        return false;
+    }
+
+    match available.get(boundary_bytes.len()) {
+        None => true,
+        Some(b'-' | b'\r' | b'\n') => true,
+        Some(_) => false,
+    }
+}
+
+/// Reads the remainder of a boundary line ("--" for the closing marker) and
+/// reports whether the part stream is finished.
+fn read_boundary_suffix<R: BufRead>(reader: &mut R) -> Result<bool, String> {
+    let mut suffix = Vec::new();
+    reader
+        .read_until(b'\n', &mut suffix)
+        .map_err(|e| e.to_string())?;
+    Ok(trim_newline(&suffix).starts_with(b"--"))
 }
 
 fn trim_newline(bytes: &[u8]) -> &[u8] {
@@ -255,10 +276,10 @@ fn trim_newline(bytes: &[u8]) -> &[u8] {
 fn parse_param(header: &str, key: &str) -> Option<String> {
     for part in header.split(';') {
         let trimmed = part.trim();
-        if let Some((k, v)) = trimmed.split_once('=') {
-            if k.trim().eq_ignore_ascii_case(key) {
-                return Some(v.trim().trim_matches('"').to_string());
-            }
+        if let Some((k, v)) = trimmed.split_once('=')
+            && k.trim().eq_ignore_ascii_case(key)
+        {
+            return Some(v.trim().trim_matches('"').to_string());
         }
     }
     None
@@ -283,8 +304,9 @@ mod tests {
             Some("---------------------------974767299852498929531610575".to_string())
         );
 
-        headers.insert("content-type".to_string(), "application/json".to_string());
-        assert_eq!(extract_multipart_boundary(&headers), None);
+        let lowercase_headers =
+            HashMap::from([("content-type".to_string(), "application/json".to_string())]);
+        assert_eq!(extract_multipart_boundary(&lowercase_headers), None);
     }
 
     #[test]
@@ -529,6 +551,233 @@ mod tests {
         assert_eq!(fields[0].filename.as_deref(), Some("ws.txt"));
         assert_eq!(fields[0].content_type.as_deref(), Some("text/plain"));
         assert_eq!(fields[0].data, b"data");
+    }
+
+    /// Deterministic pseudo-random byte generator (xorshift64*), so tests
+    /// exercise realistic binary payloads without external dependencies.
+    fn pseudo_random_bytes(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 32) as u8
+            })
+            .collect()
+    }
+
+    /// Wraps a payload in a standard browser-style multipart body with a
+    /// single file field.
+    fn build_file_upload(
+        boundary: &str,
+        filename: &str,
+        content_type: &str,
+        data: &[u8],
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
+                filename
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(format!("Content-Type: {}\r\n\r\n", content_type).as_bytes());
+        body.extend_from_slice(data);
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+        body
+    }
+
+    struct ChunkedReader {
+        data: Vec<u8>,
+        pos: usize,
+        chunk: usize,
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.pos >= self.data.len() {
+                return Ok(0);
+            }
+            let end = (self.pos + self.chunk).min(self.data.len());
+            let n = end - self.pos;
+            buf[..n].copy_from_slice(&self.data[self.pos..end]);
+            self.pos = end;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn test_binary_png_like_file_roundtrip() {
+        // PNG magic number followed by binary chunks including \r, \n and \0
+        let mut png = Vec::new();
+        png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        png.extend_from_slice(&[0x00, 0x00, 0x00, 0x0D]);
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&pseudo_random_bytes(42, 512));
+
+        let boundary = "----WebKitFormBoundaryABC123";
+        let body = build_file_upload(boundary, "image.png", "image/png", &png);
+
+        let fields = parse_multipart(body.as_slice(), boundary).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "file");
+        assert_eq!(fields[0].filename.as_deref(), Some("image.png"));
+        assert_eq!(fields[0].content_type.as_deref(), Some("image/png"));
+        assert_eq!(fields[0].data, png);
+    }
+
+    #[test]
+    fn test_binary_file_ending_with_cr() {
+        // Payload ending in '\r' directly before the terminating \r\n boundary
+        let mut data = pseudo_random_bytes(7, 300);
+        data.push(b'\r');
+
+        let boundary = "BOUND";
+        let body = build_file_upload(boundary, "blob.bin", "application/octet-stream", &data);
+
+        let fields = parse_multipart(body.as_slice(), boundary).unwrap();
+        assert_eq!(fields[0].data, data);
+    }
+
+    #[test]
+    fn test_binary_containing_boundary_prefix_sequences() {
+        // Payload full of near-boundary sequences that must NOT terminate it
+        let boundary = "----WebKitFormBoundaryXYZ";
+        let delimiter = format!("\r\n{}", boundary);
+
+        let delimiter_bytes = delimiter.as_bytes();
+
+        let mut data = Vec::new();
+        data.extend_from_slice(b"start\r\n--");
+        data.extend_from_slice(&delimiter_bytes[..delimiter_bytes.len() - 1]); // missing last char
+        data.extend_from_slice(b"\r\n\r\n--");
+        data.push(b'-'); // one extra dash
+        data.extend_from_slice(delimiter_bytes);
+        data.pop(); // drop final char so it is only a prefix
+        data.extend_from_slice(b"\r\nend");
+
+        let body = build_file_upload(boundary, "tricky.bin", "application/octet-stream", &data);
+
+        for chunk in [1usize, 2, 3, 5, 8, 64] {
+            let reader = ChunkedReader {
+                data: body.clone(),
+                pos: 0,
+                chunk,
+            };
+            let fields = parse_multipart(reader, boundary)
+                .unwrap_or_else(|e| panic!("chunk {} failed: {}", chunk, e));
+            assert_eq!(fields.len(), 1, "chunk {}", chunk);
+            assert_eq!(
+                fields[0].data, data,
+                "payload corrupted with chunk size {}",
+                chunk
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunked_delivery_all_sizes_roundtrip() {
+        // Deliver the same upload with every chunk size from 1 to 70 bytes to
+        // force the delimiter to be split across buffer boundaries everywhere.
+        let boundary = "----WebKitFormBoundaryChunked";
+        let file_data = pseudo_random_bytes(0xDEAD_BEEF, 4000);
+        let body = build_file_upload(boundary, "blob.bin", "application/octet-stream", &file_data);
+
+        for chunk in 1..=70usize {
+            let reader = ChunkedReader {
+                data: body.clone(),
+                pos: 0,
+                chunk,
+            };
+            let fields = parse_multipart(reader, boundary)
+                .unwrap_or_else(|e| panic!("chunk size {} failed: {}", chunk, e));
+            assert_eq!(fields.len(), 1, "chunk size {}", chunk);
+            assert_eq!(
+                fields[0].data, file_data,
+                "binary corruption with chunk size {}",
+                chunk
+            );
+        }
+    }
+
+    #[test]
+    fn test_large_binary_crossing_bufreader_capacity() {
+        // Larger than BufReader's default 8 KiB capacity
+        let file_data = pseudo_random_bytes(99, 40 * 1024 + 137);
+        let boundary = "----WebKitFormBoundaryLarge";
+
+        let fields = parse_multipart(
+            build_file_upload(boundary, "big.bin", "application/zip", &file_data).as_slice(),
+            boundary,
+        )
+        .unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].data, file_data);
+    }
+
+    #[test]
+    fn test_mixed_text_and_multiple_binary_files() {
+        let img = pseudo_random_bytes(1, 1000);
+        let zip = pseudo_random_bytes(2, 2000);
+        let boundary = "MIXED123";
+
+        let mut body = Vec::new();
+
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"title\"\r\n\r\n");
+        body.extend_from_slice(b"My Vacation\r\n");
+
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"photo\"; filename=\"a.png\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
+        body.extend_from_slice(&img);
+        body.extend_from_slice(b"\r\n");
+
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"archive\"; filename=\"b.zip\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: application/zip\r\n\r\n");
+        body.extend_from_slice(&zip);
+        body.extend_from_slice(b"\r\n");
+
+        body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+
+        let fields = parse_multipart(body.as_slice(), boundary).unwrap();
+        assert_eq!(fields.len(), 3);
+
+        assert_eq!(fields[0].name, "title");
+        assert_eq!(fields[0].filename, None);
+        assert_eq!(fields[0].data, b"My Vacation");
+
+        assert_eq!(fields[1].name, "photo");
+        assert_eq!(fields[1].filename.as_deref(), Some("a.png"));
+        assert_eq!(fields[1].content_type.as_deref(), Some("image/png"));
+        assert_eq!(fields[1].data, img);
+
+        assert_eq!(fields[2].name, "archive");
+        assert_eq!(fields[2].filename.as_deref(), Some("b.zip"));
+        assert_eq!(fields[2].data, zip);
+    }
+
+    #[test]
+    fn test_all_byte_values_roundtrip() {
+        // Every possible byte value repeated, including all CRLF variants
+        let mut data = Vec::with_capacity(256 * 4);
+        for b in 0..=255u8 {
+            data.extend_from_slice(&[b, b'\r', b'\n', b]);
+        }
+
+        let boundary = "ALLBYTES";
+        let body = build_file_upload(boundary, "all.bin", "application/octet-stream", &data);
+
+        let fields = parse_multipart(body.as_slice(), boundary).unwrap();
+        assert_eq!(fields[0].data, data);
     }
 
     #[test]

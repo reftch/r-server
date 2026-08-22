@@ -4,7 +4,9 @@ use std::io::Cursor;
 
 use memchr::memchr;
 
-use crate::request::multipart::{MultipartField, parse_multipart};
+use crate::request::multipart::{
+    MultipartField, extract_boundary_from_content_type, parse_multipart,
+};
 
 /// Represents an HTTP request without lifetime annotations.
 pub struct Request {
@@ -215,17 +217,15 @@ impl Request {
 
     /// Gets the multipart fields
     pub fn get_multipart_fields(&self) -> Result<Vec<MultipartField>, String> {
-        let content_type = self.header("content-type").expect("content-type not found");
+        let content_type = self
+            .header("content-type")
+            .ok_or_else(|| "content-type not found".to_string())?;
 
-        let boundary = content_type
-            .split_once("boundary=")
-            .map(|(_, b)| b.trim().trim_matches('"'))
-            .expect("boundary not found");
+        let boundary = extract_boundary_from_content_type(content_type)
+            .ok_or_else(|| "boundary not found".to_string())?;
 
         let cursor = Cursor::new(&self.body);
-        let fields = parse_multipart(cursor, boundary).expect("failed to parse multipart");
-        print!("File lenght {}", fields[0].data.len());
-        Ok(fields)
+        parse_multipart(cursor, &boundary)
     }
 }
 
