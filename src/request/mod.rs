@@ -1,12 +1,12 @@
-pub mod multipart;
+mod multipart;
 
 use std::io::Cursor;
 
 use memchr::memchr;
 
-use crate::request::multipart::{
-    MultipartField, extract_boundary_from_content_type, parse_multipart,
-};
+pub use multipart::MultipartField;
+
+use crate::request::multipart::{extract_boundary_from_content_type, parse_multipart};
 
 /// Represents an HTTP request without lifetime annotations.
 pub struct Request {

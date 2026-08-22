@@ -22,13 +22,6 @@ fn get_header_ignore_case<'a>(
         .map(|(_, v)| v)
 }
 
-/// Detects if the Content-Type header indicates a multipart/form-data request
-/// and extracts the boundary parameter if present.
-pub fn extract_multipart_boundary(headers: &HashMap<String, String>) -> Option<String> {
-    let content_type = get_header_ignore_case(headers, "content-type")?;
-    extract_boundary_from_content_type(content_type)
-}
-
 /// Extracts the boundary parameter from a raw Content-Type value.
 pub fn extract_boundary_from_content_type(content_type: &str) -> Option<String> {
     let first_part = content_type.split(';').next()?.trim();
@@ -290,23 +283,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_multipart_boundary() {
-        let mut headers = HashMap::new();
-        headers.insert(
-            "Content-Type".to_string(),
-            "multipart/form-data; boundary=---------------------------974767299852498929531610575"
-                .to_string(),
+    fn test_extract_boundary_from_content_type() {
+        let boundary = extract_boundary_from_content_type(
+            "multipart/form-data; boundary=---------------------------974767299852498929531610575",
         );
-
-        let boundary = extract_multipart_boundary(&headers);
         assert_eq!(
             boundary,
             Some("---------------------------974767299852498929531610575".to_string())
         );
 
-        let lowercase_headers =
-            HashMap::from([("content-type".to_string(), "application/json".to_string())]);
-        assert_eq!(extract_multipart_boundary(&lowercase_headers), None);
+        assert_eq!(extract_boundary_from_content_type("application/json"), None);
     }
 
     #[test]
