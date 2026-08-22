@@ -8,6 +8,7 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 - **High-Performance Routing**: Trie-based router with support for dynamic path parameters (e.g., `/users/:id`).
 - **Middleware**: Pluggable request pipeline via `fn(&Request, &mut Response, Next)`, chained with `use_middleware` to run logic (logging, timing, auth) for every request before it reaches the handler.
 - **Static File Serving**: Built-in support for serving assets from a designated directory with automatic MIME type detection.
+- **Multipart Support**: Built-in parsing of `multipart/form-data` requests for handling file uploads and form fields.
 - **Modular Architecture**: Separated into specialized modules for requests, responses, routing, and server logic.
 - **Client**: A HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests. It supports both HTTP and HTTPS via SSL/TLS.
 
@@ -21,7 +22,7 @@ Handles client requests to a different endpoint.
 
 ### `request`
 
-Handles parsing and representation of incoming HTTP requests from raw byte buffers into structured data including methods, headers, query parameters, and path parameters.
+Handles parsing and representation of incoming HTTP requests from raw byte buffers into structured data including methods, headers, query parameters, and path parameters. Also includes `multipart/form-data` body parsing (`MultipartField`, `get_multipart_fields`).
 
 ### `response`
 
@@ -203,6 +204,66 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+### Multipart (File Uploads)
+
+The server can parse `multipart/form-data` request bodies out of the box. In a handler, call
+`req.get_multipart_fields()` to get a `Vec<MultipartField>`. Each field contains:
+
+- `name`: The form field name (`name` attribute from `Content-Disposition`).
+- `filename`: The original filename for uploaded files (`None` for plain form fields).
+- `content_type`: The MIME type of the part, if provided.
+- `data`: The raw bytes of the part.
+
+A runnable version of this example lives in `examples/multipart`.
+
+```rust
+use r_server::{core::http::Server, info, response::ContentType, router::Method};
+
+fn main() -> std::io::Result<()> {
+    Server::new()?
+        .route(Method::GET, "/", |_req, res| {
+            // Simple upload form
+            res.content_type(ContentType::HTML).body(
+                r#"<html>
+                    <head><title>Upload Test</title></head>
+                    <body>
+                        <form target="/" method="post" enctype="multipart/form-data">
+                            <input type="file" multiple name="file"/>
+                            <button type="submit">Submit</button>
+                        </form>
+                    </body>
+                </html>"#,
+            );
+        })
+        .route(Method::POST, "/", |req, res| {
+            let fields = req.get_multipart_fields().expect("failed to parse multipart");
+
+            for field in fields {
+                match field.filename {
+                    Some(filename) => {
+                        info!("saving file {filename} ({} bytes)", field.data.len());
+                        std::fs::write(&filename, &field.data).expect("failed to write file");
+                    }
+                    None => {
+                        info!("field `{}` = {}", field.name, String::from_utf8_lossy(&field.data));
+                    }
+                }
+            }
+
+            res.body("Uploaded");
+        })
+        .run()?;
+
+    Ok(())
+}
+```
+
+You can also test it with `curl`:
+
+```bash
+curl -F "file=@photo.jpg" http://localhost:8080/
+```
+
 ### Static resources
 
 By default server try to find local directory `assets` and find there index.html. For example:
@@ -244,6 +305,7 @@ The `Request` object provided to handlers contains:
 - `.params`: A map of dynamic path parameters (e.g., `:id`).
 - `.headers`: A map of request headers.
 - `.query_params`: A map of URL query parameters.
+- `.get_multipart_fields() -> Result<Vec<MultipartField>, String>`: Parses a `multipart/form-data` body using the boundary from the `Content-Type` header.
 
 ## Getting Started
 
