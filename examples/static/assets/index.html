@@ -4,39 +4,22 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta name="description" content="Web template" />
-        <title>R-Server SSE Example</title>
+        <title>Static page</title>
         <link rel="stylesheet" href="styles.css" />
-
-        <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta6/dist/htmx.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta6/dist/ext/hx-sse.min.js"></script>
     </head>
 
     <body>
         <div class="container">
-            <nav><a href="/websocket">::Websocket</a></nav>
+            <nav><a href="/home">Home page</a></nav>
+            <nav><a href="/dashboard">Dashboard</a></nav>
             <h2>Welcome to simple Web Page</h2>
             <p>This is a simple web page that includes a PNG image.</p>
-
             <img
                 src="image.png"
                 width="100"
                 alt="A sample PNG image"
                 class="centered-image"
             />
-
-            <!-- Auto-connects on load, streams messages into the div -->
-            <div
-                hx-sse:connect="/stream"
-                hx-target="#count"
-                style="
-                    display: flex;
-                    align-items: center;
-                    height: 30px;
-                    gap: 5px;
-                "
-            >
-                <span>Count:</span><span id="count"></span>
-            </div>
         </div>
     </body>
 </html>

@@ -1,28 +1,28 @@
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
-};
-
-use r_server::{core::http::Server, router::Method, task};
-
-static COUNTER: AtomicU64 = AtomicU64::new(0);
+use r_server::{core::http::Server, router::Method};
 
 fn main() -> std::io::Result<()> {
     Server::new()?
-        .route(Method::GET, "/stream", |req, res| {
-            task::repeat_every(
-                req.path.to_string(), // Converts Box<str> / &str to String
-                &*res.metadata,       // Dereferences Arc<dyn Metadata> to &dyn Metadata
-                Duration::from_millis(50),
-                |res| {
-                    let _ = res.stream(&format!(
-                        "{}\n\n",
-                        COUNTER.fetch_add(1, Ordering::Relaxed) + 1
-                    ));
-                },
-            );
+        .route(Method::GET, "/dashboard", |_req, res| {
+            res.content_type(r_server::response::ContentType::HTML)
+                .body(
+                    r#"<html>
+                        <head>
+                            <title>Dashboard page</title>
+                            <link rel="stylesheet" href="styles.css" />
+                        </head>
+                        <div class="container">
+                            <nav>
+                                <a href="/">Index page</a>
+                                <a href="/home">Home page</a>
+                            </nav>
+                        </div>
+                        <body>
+                        </body>
+                    </html>"#,
+                );
         })
         .assets_path("./examples/static/assets")
+        .workers(2)
         .run()?;
     Ok(())
 }
