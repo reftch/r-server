@@ -217,6 +217,7 @@ impl Server {
         })
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn bind_listener(addr: &str) -> io::Result<TcpListener> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
@@ -224,28 +225,21 @@ impl Server {
     }
 
     #[cfg(target_os = "linux")]
-    fn bind_reuseport_listener(addr: &str) -> io::Result<TcpListener> {
-        use std::net::SocketAddr;
+    fn bind_reuseport_listener(addr: &str) -> std::io::Result<std::net::TcpListener> {
+        use std::io;
+        use std::net::{SocketAddr, TcpListener};
         use std::os::unix::io::FromRawFd;
 
         let sock_addr: SocketAddr = addr
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-        let (domain, addr_ptr, addr_len) = match sock_addr {
-            SocketAddr::V4(ref a) => (
-                libc::AF_INET,
-                a as *const libc::sockaddr_in as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-            ),
-            SocketAddr::V6(ref a) => (
-                libc::AF_INET6,
-                a as *const libc::sockaddr_in6 as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
-            ),
-        };
-
         unsafe {
+            let (domain, family) = match sock_addr {
+                SocketAddr::V4(_) => (libc::AF_INET, libc::AF_INET),
+                SocketAddr::V6(_) => (libc::AF_INET6, libc::AF_INET6),
+            };
+
             let fd = libc::socket(
                 domain,
                 libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
@@ -262,14 +256,14 @@ impl Server {
                 fd,
                 libc::SOL_SOCKET,
                 libc::SO_REUSEADDR,
-                &on as *const libc::c_int as *const libc::c_void,
+                &on as *const _ as *const libc::c_void,
                 opt_len,
             ) < 0
                 || libc::setsockopt(
                     fd,
                     libc::SOL_SOCKET,
                     libc::SO_REUSEPORT,
-                    &on as *const libc::c_int as *const libc::c_void,
+                    &on as *const _ as *const libc::c_void,
                     opt_len,
                 ) < 0
             {
@@ -278,7 +272,42 @@ impl Server {
                 return Err(err);
             }
 
-            if libc::bind(fd, addr_ptr, addr_len) < 0 || libc::listen(fd, libc::SOMAXCONN) < 0 {
+            // Keep local sockaddr structures alive in scope during bind()
+            let bind_res = match sock_addr {
+                SocketAddr::V4(a) => {
+                    let sin = libc::sockaddr_in {
+                        sin_family: family as libc::sa_family_t,
+                        sin_port: a.port().to_be(),
+                        sin_addr: libc::in_addr {
+                            s_addr: u32::from_ne_bytes(a.ip().octets()),
+                        },
+                        sin_zero: [0; 8],
+                    };
+                    libc::bind(
+                        fd,
+                        &sin as *const _ as *const libc::sockaddr,
+                        std::mem::size_of_val(&sin) as libc::socklen_t,
+                    )
+                }
+                SocketAddr::V6(a) => {
+                    let sin6 = libc::sockaddr_in6 {
+                        sin6_family: family as libc::sa_family_t,
+                        sin6_port: a.port().to_be(),
+                        sin6_flowinfo: a.flowinfo(),
+                        sin6_addr: libc::in6_addr {
+                            s6_addr: a.ip().octets(),
+                        },
+                        sin6_scope_id: a.scope_id(),
+                    };
+                    libc::bind(
+                        fd,
+                        &sin6 as *const _ as *const libc::sockaddr,
+                        std::mem::size_of_val(&sin6) as libc::socklen_t,
+                    )
+                }
+            };
+
+            if bind_res < 0 || libc::listen(fd, libc::SOMAXCONN) < 0 {
                 let err = io::Error::last_os_error();
                 libc::close(fd);
                 return Err(err);
@@ -603,7 +632,11 @@ impl Server {
 
     /// Single-worker polling loop. Each worker owns its listener and its
     /// connections exclusively; no synchronization is needed on the hot path.
-    fn event_loop(listener: &TcpListener, ctx: &WorkerCtx, shutdown: &AtomicBool) -> io::Result<()> {
+    fn event_loop(
+        listener: &TcpListener,
+        ctx: &WorkerCtx,
+        shutdown: &AtomicBool,
+    ) -> io::Result<()> {
         listener.set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {
