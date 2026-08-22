@@ -1,6 +1,10 @@
 pub mod multipart;
 
+use std::io::Cursor;
+
 use memchr::memchr;
+
+use crate::request::multipart::{MultipartField, parse_multipart};
 
 /// Represents an HTTP request without lifetime annotations.
 pub struct Request {
@@ -17,6 +21,8 @@ pub struct Request {
     pub params: Vec<KeyValuePair>,
     /// A list of query parameters from the URL.
     pub query_params: Vec<KeyValuePair>,
+    /// Raw body of request
+    pub body: Vec<u8>,
 }
 
 /// Type alias for key-value string pairs used in headers and parameters.
@@ -91,6 +97,7 @@ impl Request {
             headers,
             params: Vec::with_capacity(4),
             query_params,
+            body: buf[header_end..].to_vec(),
         })
     }
 
@@ -176,8 +183,13 @@ impl Request {
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
-            .find(|(k, _)| &**k == name)
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| &**v)
+    }
+
+    /// Returns the raw Content-Type header value using case-insensitive lookup.
+    pub fn content_type(&self) -> Option<&str> {
+        self.header("content-type")
     }
 
     /// Gets a query parameter by name.
@@ -189,10 +201,31 @@ impl Request {
             .map(|(_, v)| &**v)
     }
 
-    /// Gets the Content-Type header.
+    /// Returns the MIME type (media type portion of Content-Type without parameters/charset).
     #[inline(always)]
-    pub fn mime_type(&self) -> Option<&str> {
-        self.header("Content-Type")
+    pub fn mime_type(&self) -> Option<String> {
+        let ct = self.header("content-type")?;
+        let mime = ct.split(';').next()?.trim();
+        if mime.is_empty() {
+            None
+        } else {
+            Some(mime.to_lowercase())
+        }
+    }
+
+    /// Gets the multipart fields
+    pub fn get_multipart_fields(&self) -> Result<Vec<MultipartField>, String> {
+        let content_type = self.header("content-type").expect("content-type not found");
+
+        let boundary = content_type
+            .split_once("boundary=")
+            .map(|(_, b)| b.trim().trim_matches('"'))
+            .expect("boundary not found");
+
+        let cursor = Cursor::new(&self.body);
+        let fields = parse_multipart(cursor, boundary).expect("failed to parse multipart");
+        print!("File lenght {}", fields[0].data.len());
+        Ok(fields)
     }
 }
 

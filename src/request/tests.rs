@@ -32,10 +32,14 @@ mod tests {
     }
 
     #[test]
-    fn test_request_mime_type() {
-        let buf = b"POST / HTTP/1.1\r\nContent-Type: image/png\r\n\r\n";
+    fn test_request_mime_type_case_insensitive() {
+        let buf = b"POST / HTTP/1.1\r\ncontent-type: image/png\r\n\r\n";
         let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.mime_type(), Some("image/png"));
+        assert_eq!(request.mime_type(), Some("image/png".to_string()));
+
+        let buf2 = b"POST / HTTP/1.1\r\nContent-Type: image/png\r\n\r\n";
+        let request2 = Request::parse(buf2).expect("Should parse valid request");
+        assert_eq!(request2.mime_type(), Some("image/png".to_string()));
     }
 
     #[test]
@@ -43,19 +47,6 @@ mod tests {
         let buf = b"GET / HTTP/1.1\r\n\r\n";
         let request = Request::parse(buf).expect("Should parse valid request");
         assert_eq!(request.mime_type(), None);
-    }
-
-    #[test]
-    fn test_request_mime_type_case_insensitive() {
-        // The current implementation uses HashMap::get which is case-sensitive for keys.
-        // Let's test if "Content-Type" works but "content-type" doesn't (based on the current code).
-        let buf = b"POST / HTTP/1.1\r\ncontent-type: image/png\r\n\r\n";
-        let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.mime_type(), None);
-
-        let buf2 = b"POST / HTTP/1.1\r\nContent-Type: image/png\r\n\r\n";
-        let request2 = Request::parse(buf2).expect("Should parse valid request");
-        assert_eq!(request2.mime_type(), Some("image/png"));
     }
 
     #[test]

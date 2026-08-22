@@ -9,23 +9,36 @@ pub struct MultipartField {
     pub data: Vec<u8>,
 }
 
+/// Case-insensitive header lookup helper that never mutates the underlying map.
+fn get_header_ignore_case<'a>(
+    headers: &'a HashMap<String, String>,
+    key: &str,
+) -> Option<&'a String> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(key))
+        .map(|(_, v)| v)
+}
+
 /// Detects if the Content-Type header indicates a multipart/form-data request
 /// and extracts the boundary parameter if present.
 pub fn extract_multipart_boundary(headers: &HashMap<String, String>) -> Option<String> {
-    let content_type = headers.get("content-type")?;
+    let content_type = get_header_ignore_case(headers, "content-type")?;
 
-    if !content_type
-        .to_lowercase()
-        .starts_with("multipart/form-data")
-    {
+    let first_part = content_type.split(';').next()?.trim();
+    if !first_part.eq_ignore_ascii_case("multipart/form-data") {
         return None;
     }
 
-    for param in content_type.split(';') {
+    for param in content_type.split(';').skip(1) {
         let trimmed = param.trim();
-        if trimmed.to_lowercase().starts_with("boundary=") {
-            let boundary = &trimmed["boundary=".len()..];
-            return Some(boundary.trim_matches('"').to_string());
+        if let Some((key, val)) = trimmed.split_once('=') {
+            if key.trim().eq_ignore_ascii_case("boundary") {
+                let boundary_val = val.trim().trim_matches('"');
+                if !boundary_val.is_empty() {
+                    return Some(boundary_val.to_string());
+                }
+            }
         }
     }
 
@@ -59,14 +72,19 @@ fn skip_preamble<R: BufRead>(reader: &mut R, boundary_bytes: &[u8]) -> Result<bo
     let mut line = Vec::new();
     loop {
         line.clear();
-        if reader
+        let bytes_read = reader
             .read_until(b'\n', &mut line)
-            .map_err(|e| e.to_string())?
-            == 0
-        {
+            .map_err(|e| e.to_string())?;
+
+        if bytes_read == 0 {
             return Err("Unexpected EOF searching for initial boundary".into());
         }
+
         let trimmed = trim_newline(&line);
+        if trimmed.is_empty() {
+            continue;
+        }
+
         if trimmed == boundary_bytes {
             return Ok(false);
         }
@@ -82,14 +100,13 @@ fn parse_single_part<R: BufRead>(
 ) -> Result<(MultipartField, bool), String> {
     let headers = read_part_headers(reader)?;
 
-    let cd = headers
-        .get("content-disposition")
+    let cd = get_header_ignore_case(&headers, "content-disposition")
         .ok_or_else(|| "Missing Content-Disposition header".to_string())?;
 
     let name = parse_param(cd, "name")
         .ok_or_else(|| "Missing 'name' in Content-Disposition".to_string())?;
     let filename = parse_param(cd, "filename");
-    let content_type = headers.get("content-type").cloned();
+    let content_type = get_header_ignore_case(&headers, "content-type").cloned();
 
     let (data, is_closing) = read_part_body(reader, boundary_bytes)?;
 
@@ -137,59 +154,89 @@ fn read_part_body<R: BufRead>(
 ) -> Result<(Vec<u8>, bool), String> {
     let mut data = Vec::new();
 
-    // Check if body is empty (reader points directly at boundary without preceding \r\n)
-    if let Ok(buf) = reader.fill_buf() {
-        if buf.starts_with(boundary_bytes) {
-            reader.consume(boundary_bytes.len());
-
-            let is_closing = if let Ok(next_buf) = reader.fill_buf() {
-                next_buf.starts_with(b"--")
-            } else {
-                false
-            };
-
-            let mut dummy = Vec::new();
-            let _ = reader.read_until(b'\n', &mut dummy);
-
-            return Ok((Vec::new(), is_closing));
-        }
-    }
-
+    // The boundary in body content is prefixed by \r\n
     let mut delimiter = Vec::with_capacity(boundary_bytes.len() + 2);
     delimiter.extend_from_slice(b"\r\n");
     delimiter.extend_from_slice(boundary_bytes);
 
-    let mut matched_len = 0;
-
     loop {
-        let byte = match reader.fill_buf() {
-            Ok(buf) if !buf.is_empty() => buf[0],
+        let available = match reader.fill_buf() {
+            Ok(buf) if !buf.is_empty() => buf,
             Ok(_) => return Err("Unexpected EOF reading part body".into()),
             Err(e) => return Err(e.to_string()),
         };
 
-        if byte == delimiter[matched_len] {
-            matched_len += 1;
-            reader.consume(1);
+        // Standard case: full delimiter is visible in current buffer slice
+        if available.len() >= delimiter.len() {
+            if available.starts_with(&delimiter) {
+                reader.consume(delimiter.len());
 
-            if matched_len == delimiter.len() {
-                let is_closing = if let Ok(buf) = reader.fill_buf() {
-                    buf.starts_with(b"--")
-                } else {
-                    false
-                };
-
-                let mut dummy = Vec::new();
-                let _ = reader.read_until(b'\n', &mut dummy);
+                let mut suffix = Vec::new();
+                let _ = reader.read_until(b'\n', &mut suffix);
+                let trimmed = trim_newline(&suffix);
+                let is_closing = trimmed.starts_with(b"--");
 
                 return Ok((data, is_closing));
             }
-        } else if matched_len > 0 {
-            data.extend_from_slice(&delimiter[..matched_len]);
-            matched_len = 0;
+        }
+
+        // Search for possible delimiter start (\r)
+        if let Some(pos) = available.iter().position(|&b| b == b'\r') {
+            if pos > 0 {
+                // Safely stream everything up to the first candidate \r
+                data.extend_from_slice(&available[..pos]);
+                reader.consume(pos);
+            } else {
+                // \r is at position 0. Check how much of delimiter we can match in current buffer
+                let match_len = available.len().min(delimiter.len());
+                if delimiter.starts_with(&available[..match_len]) {
+                    if available.len() >= delimiter.len() {
+                        // Full match checked and failed above, so move 1 byte forward
+                        data.push(available[0]);
+                        reader.consume(1);
+                    } else {
+                        // Partial match at end of current buffer.
+                        // Read 1 byte to force buffer fill without corrupting position state
+                        let byte = available[0];
+                        reader.consume(1);
+
+                        // Peeking next byte after consume
+                        let next_buf = match reader.fill_buf() {
+                            Ok(buf) => buf,
+                            Err(e) => return Err(e.to_string()),
+                        };
+
+                        // Reconstruct lookahead
+                        let mut check = Vec::with_capacity(1 + next_buf.len());
+                        check.push(byte);
+                        check.extend_from_slice(next_buf);
+
+                        if check.starts_with(&delimiter) {
+                            // Boundary hit! Consume remaining delimiter bytes
+                            reader.consume(delimiter.len() - 1);
+
+                            let mut suffix = Vec::new();
+                            let _ = reader.read_until(b'\n', &mut suffix);
+                            let trimmed = trim_newline(&suffix);
+                            let is_closing = trimmed.starts_with(b"--");
+
+                            return Ok((data, is_closing));
+                        }
+
+                        // Not a boundary match: push byte to body data and continue
+                        data.push(byte);
+                    }
+                } else {
+                    // \r was present but did not match delimiter prefix
+                    data.push(available[0]);
+                    reader.consume(1);
+                }
+            }
         } else {
-            data.push(byte);
-            reader.consume(1);
+            // No \r found in buffer at all; safely consume whole buffer
+            let len = available.len();
+            data.extend_from_slice(available);
+            reader.consume(len);
         }
     }
 }
@@ -206,12 +253,12 @@ fn trim_newline(bytes: &[u8]) -> &[u8] {
 }
 
 fn parse_param(header: &str, key: &str) -> Option<String> {
-    let target = format!("{}=", key);
     for part in header.split(';') {
         let trimmed = part.trim();
-        if trimmed.starts_with(&target) {
-            let value = &trimmed[target.len()..];
-            return Some(value.trim_matches('"').to_string());
+        if let Some((k, v)) = trimmed.split_once('=') {
+            if k.trim().eq_ignore_ascii_case(key) {
+                return Some(v.trim().trim_matches('"').to_string());
+            }
         }
     }
     None
@@ -225,7 +272,7 @@ mod tests {
     fn test_extract_multipart_boundary() {
         let mut headers = HashMap::new();
         headers.insert(
-            "content-type".to_string(),
+            "Content-Type".to_string(),
             "multipart/form-data; boundary=---------------------------974767299852498929531610575"
                 .to_string(),
         );
@@ -320,6 +367,26 @@ mod tests {
         let fields = parse_multipart(body.as_bytes(), boundary).unwrap();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].data, b"\r\n--abXdata");
+    }
+
+    #[test]
+    fn test_binary_data_with_newline_bytes() {
+        let boundary = "BIN";
+        let body = format!(
+            "--{}\r\n\
+             Content-Disposition: form-data; name=\"pdf\"; filename=\"test.pdf\"\r\n\
+             Content-Type: application/pdf\r\n\r\n\
+             %PDF-1.4\n<binary>\n0x0A\nmore\x00\x01\x02\r\n--{}--\r\n",
+            boundary, boundary
+        );
+
+        let fields = parse_multipart(body.as_bytes(), boundary).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "pdf");
+        assert_eq!(fields[0].filename.as_deref(), Some("test.pdf"));
+        assert_eq!(fields[0].content_type.as_deref(), Some("application/pdf"));
+        assert!(fields[0].data.contains(&0x0A));
+        assert!(fields[0].data.contains(&b'%'));
     }
 
     #[test]

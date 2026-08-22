@@ -16,8 +16,17 @@ fn main() -> std::io::Result<()> {
                     </html>"#,
                 );
         })
-        .route(Method::POST, "/", |_req, res| {
-            info!("uploaded");
+        .route(Method::POST, "/", |req, res| {
+            let fields = req
+                .get_multipart_fields()
+                .expect("failed to parse multipart");
+
+            if let Some(first) = fields.first() {
+                let path = format!("{}", first.filename.as_deref().unwrap_or("un"));
+                info!("saving to {path}");
+                std::fs::write(&path, &first.data).expect("failed to write file");
+            }
+            res.body("Uploaded");
         })
         .run()?;
     Ok(())
