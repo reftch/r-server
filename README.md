@@ -5,6 +5,7 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 ## Features
 
 - **Asynchronous Engine**: Uses non-blocking I/O for efficient concurrent connection handling.
+- **Multi-Worker Architecture**: Configurable number of worker threads (`workers(n)`), each running an independent event loop with the kernel distributing connections across them.
 - **High-Performance Routing**: Trie-based router with support for dynamic path parameters (e.g., `/users/:id`).
 - **Middleware**: Pluggable request pipeline via `fn(&Request, &mut Response, Next)`, chained with `use_middleware` to run logic (logging, timing, auth) for every request before it reaches the handler.
 - **Static File Serving**: Built-in support for serving assets from a designated directory with automatic MIME type detection.
@@ -130,6 +131,28 @@ fn main() -> std::io::Result<()> {
     Server::new()?.bind("0.0.0.0", 8080).run()?;
     Ok(())
 }
+```
+
+### Workers
+
+Both the HTTP (`server::http::Server`) and HTTPS (`server::https::Server`) servers can run on multiple worker threads via `workers(n)`.
+Each worker runs an independent event loop with its own connection set, and the OS distributes incoming connections across
+workers (via `SO_REUSEPORT` on Linux, a shared listening socket elsewhere). The method returns `&mut Self`, so it can be chained
+before `run()`. Defaults to a single worker.
+
+```rust
+use r_server::core::http::Server;
+
+fn main() -> std::io::Result<()> {
+    Server::new()?.workers(4).run()?;
+    Ok(())
+}
+```
+
+The startup log reports how many workers are running:
+
+```sh
+[2026-08-21 06:54:36.524] [INFO] [r_server::core::http] - HTTP server started on http://127.0.0.1:8080 with 4 worker(s) in 18µs
 ```
 
 ### Client
@@ -283,6 +306,7 @@ By default server try to find local directory `assets` and find there index.html
 | `new() -> IoResult<Self>`                           | Creates a new server instance. Reads `HOST`/`PORT` env vars, defaulting to `0.0.0.0:8080` for the HTTP server and `0.0.0.0:8443` for the HTTPS server.                                                                 |
 | `bind(host: &str, port: u16)`                       | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction. |
 | `assets_path(path: &str)`                           | Sets the directory for serving static files.                                                                                                                                                                           |
+| `workers(n: usize)`                                 | Sets the number of worker threads. Each worker runs an independent event loop; the OS distributes connections across them (`SO_REUSEPORT` on Linux, a shared listening socket elsewhere). Values below 1 are clamped to 1. Defaults to 1. Returns `&mut Self`. |
 | `route(method, path, handler)`                      | Registers a new route with a specific HTTP method and path.                                                                                                                                                            |
 | `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                              |
 | `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                    |
