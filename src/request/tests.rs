@@ -100,4 +100,123 @@ mod tests {
         assert_eq!(request.headers.len(), 1);
         assert_eq!(request.header("X-Valid"), Some("value"));
     }
+
+    /// Deterministic pseudo-random bytes (xorshift64*), so tests exercise
+    /// realistic binary payloads without external dependencies.
+    fn pseudo_random_bytes(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 32) as u8
+            })
+            .collect()
+    }
+
+    /// Builds a browser-style multipart upload HTTP request.
+    /// Returns (raw request bytes, raw multipart body bytes).
+    fn build_binary_upload_request(file_data: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let boundary = "----WebKitFormBoundaryABC123";
+
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"img.png\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: image/png\r\n\r\n");
+        body.extend_from_slice(file_data);
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+        let mut http = Vec::new();
+        http.extend_from_slice(b"POST /upload HTTP/1.1\r\n");
+        http.extend_from_slice(
+            format!(
+                "Content-Type: multipart/form-data; boundary={}\r\n",
+                boundary
+            )
+            .as_bytes(),
+        );
+        http.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        http.extend_from_slice(&body);
+        (http, body)
+    }
+
+    #[test]
+    fn test_request_binary_multipart_upload_roundtrip() {
+        // PNG magic followed by pseudo-random binary data including \r and \n
+        let mut file_data = Vec::new();
+        file_data.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        file_data.extend_from_slice(&pseudo_random_bytes(0xC0FFEE, 16 * 1024));
+
+        let (http, mp_body) = build_binary_upload_request(&file_data);
+        let request = Request::parse(&http).expect("Should parse upload request");
+
+        assert_eq!(request.method, "POST".into());
+        assert_eq!(request.path, "/upload".into());
+        assert_eq!(request.body, mp_body);
+
+        let fields = request.get_multipart_fields().expect("multipart parse");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].filename.as_deref(), Some("img.png"));
+        assert_eq!(fields[0].content_type.as_deref(), Some("image/png"));
+        assert_eq!(fields[0].data, file_data, "uploaded binary corrupted");
+    }
+
+    #[test]
+    fn test_request_incomplete_body_returns_none() {
+        let file_data = pseudo_random_bytes(7, 4096);
+        let (http, mp_body) = build_binary_upload_request(&file_data);
+        let total_body = mp_body.len();
+        let headers_len = http.len() - total_body;
+
+        // Deliver only headers plus part of the body: request must NOT be
+        // dispatched until every announced byte has arrived.
+        for arrived in [0usize, 10, total_body / 4, total_body / 2, total_body - 1] {
+            let cut = headers_len + arrived;
+            let parsed = Request::parse(&http[..cut]);
+            assert!(
+                parsed.is_none(),
+                "dispatched early with {arrived}/{total_body} body bytes"
+            );
+        }
+
+        // Complete body -> parses successfully with exact payload.
+        let parsed = Request::parse(&http).expect("complete request should parse");
+        assert_eq!(parsed.body, mp_body);
+    }
+
+    #[test]
+    fn test_request_content_length_truncates_extra_bytes() {
+        let (mut http, mp_body) = build_binary_upload_request(b"\x00\x01\x02\r\n\x03");
+
+        // Simulate an extra byte appended beyond Content-Length
+        http.extend_from_slice(b"EXTRA");
+
+        let request = Request::parse(&http).expect("Should parse request");
+        assert_eq!(request.body, mp_body);
+    }
+
+    #[test]
+    fn test_request_without_content_length_keeps_legacy_behavior() {
+        // No Content-Length header -> body is whatever follows the headers
+        let buf = b"POST / HTTP/1.1\r\nContent-Type: text/plain\r\n\r\nraw bytes";
+        let request = Request::parse(buf).expect("Should parse valid request");
+        assert_eq!(request.body, b"raw bytes");
+    }
+
+    #[test]
+    fn test_request_zero_content_length() {
+        let buf = b"POST / HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
+        let request = Request::parse(buf).expect("Should parse valid request");
+        assert!(request.body.is_empty());
+    }
+
+    #[test]
+    fn test_request_case_insensitive_content_length() {
+        let buf = b"POST / HTTP/1.1\r\ncontent-LENGTH: 5\r\n\r\nhello";
+        let request = Request::parse(buf).expect("Should parse valid request");
+        assert_eq!(request.body, b"hello");
+    }
 }

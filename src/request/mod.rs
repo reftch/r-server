@@ -49,7 +49,29 @@ impl Request {
         None
     }
 
+    /// Finds a header value by name (case-insensitive) in a parsed header list.
+    #[inline(always)]
+    fn find_header_value<'a>(headers: &'a [KeyValuePair], name: &str) -> Option<&'a str> {
+        headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| &**v)
+    }
+
+    /// Parses the Content-Length header into a byte count, if present and valid.
+    #[inline(always)]
+    fn content_length(headers: &[KeyValuePair]) -> Option<usize> {
+        Self::find_header_value(headers, "content-length")?
+            .trim()
+            .parse::<usize>()
+            .ok()
+    }
+
     /// Parses an HTTP request from a byte buffer.
+    ///
+    /// Returns `None` while the request is still incomplete (e.g. the body
+    /// announced via Content-Length has not fully arrived), so buffered
+    /// partial reads are kept until the whole request is available.
     #[inline(always)]
     pub fn parse(buf: &[u8]) -> Option<Self> {
         let header_end = Self::find_header_end(buf)?;
@@ -92,6 +114,18 @@ impl Request {
         let (path, query_params) = Self::parse_path_and_query(full_path);
         let headers = Self::parse_headers(&mut lines);
 
+        // Wait until the body announced via Content-Length has fully arrived
+        // before dispatching, otherwise large uploads (which span multiple
+        // socket reads) would be handed to handlers with truncated bodies.
+        let content_length = Self::content_length(&headers);
+        if let Some(len) = content_length
+            && buf.len() < header_end + len
+        {
+            return None;
+        }
+
+        let body_len = content_length.unwrap_or(buf.len() - header_end);
+
         Some(Self {
             method: method.into(),
             path: path.into(),
@@ -99,7 +133,7 @@ impl Request {
             headers,
             params: Vec::with_capacity(4),
             query_params,
-            body: buf[header_end..].to_vec(),
+            body: buf[header_end..header_end + body_len].to_vec(),
         })
     }
 
