@@ -21,11 +21,22 @@ fn main() -> std::io::Result<()> {
                 .get_multipart_fields()
                 .expect("failed to parse multipart");
 
-            if let Some(first) = fields.first() {
-                let path = format!("{}", first.filename.as_deref().unwrap_or("un"));
-                info!("saving to {path}");
-                std::fs::write(&path, &first.data).expect("failed to write file");
+            for field in fields {
+                match field.filename {
+                    Some(filename) => {
+                        info!("saving file {filename} ({} bytes)", field.data.len());
+                        std::fs::write(&filename, &field.data).expect("failed to write file");
+                    }
+                    None => {
+                        info!(
+                            "field `{}` = {}",
+                            field.name,
+                            String::from_utf8_lossy(&field.data)
+                        );
+                    }
+                }
             }
+
             res.body("Uploaded");
         })
         .run()?;

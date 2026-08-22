@@ -132,4 +132,80 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_server_multi_worker() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let _guard = TEST_LOCK.lock().unwrap();
+        logger::set_level(LogLevel::None);
+
+        let mut server = Server::new()?;
+        server
+            .bind("127.0.0.1", 18082)
+            .workers(4)
+            .route(Method::GET, "/", hello_handler);
+
+        thread::spawn(move || {
+            if let Err(e) = server.run() {
+                eprintln!("Server error: {}", e);
+            }
+        });
+
+        thread::sleep(Duration::from_millis(100));
+
+        let fetch =
+            |id: u8| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            let mut stream = TcpStream::connect("127.0.0.1:18082")?;
+            stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+            stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+
+            write!(
+                stream,
+                "GET /?id={id} HTTP/1.1\r\n\
+                 Host: 127.0.0.1\r\n\
+                 Connection: close\r\n\
+                 \r\n"
+            )?;
+
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 1024];
+
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buffer.extend_from_slice(&chunk[..n]);
+                        if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => break,
+                    Err(e) => return Err(e.into()),
+                }
+            }
+
+            Ok(String::from_utf8_lossy(&buffer).into_owned())
+        };
+
+        // Sequential requests must all be served regardless of which worker accepts.
+        for id in 0..16u8 {
+            let response = fetch(id)?;
+            assert!(response.contains("200 OK"), "Request {id}: {response}");
+            assert!(
+                response.contains("Hello, World!"),
+                "Request {id}: {response}"
+            );
+        }
+
+        // Concurrent requests across workers.
+        let handles: Vec<_> = (0..8u8)
+            .map(|id| thread::spawn(move || fetch(id)))
+            .collect();
+
+        for handle in handles {
+            let response = handle.join().unwrap()?;
+            assert!(response.contains("Hello, World!"), "Concurrent: {response}");
+        }
+
+        Ok(())
+    }
 }

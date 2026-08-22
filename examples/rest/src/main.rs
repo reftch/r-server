@@ -11,6 +11,7 @@ fn hello_handler(_req: &Request, res: &mut Response) {
 
 fn main() -> std::io::Result<()> {
     Server::new()?
+        .workers(4)
         .route(Method::GET, "/hello", hello_handler)
         .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {

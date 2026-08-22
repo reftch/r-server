@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
@@ -16,6 +17,7 @@ use crate::{debug, error, info, trace};
 use std::io::{self, Read, Write};
 
 use std::sync::Arc;
+use std::thread;
 
 #[repr(C)]
 struct PollFd {
@@ -55,12 +57,18 @@ enum WriteState {
     Close,
 }
 
+/// Immutable state shared by all worker threads.
+struct WorkerCtx {
+    router: Arc<Router>,
+    assets_path: PathBuf,
+}
+
 pub struct Server {
     init_start: Instant,
-    listener: Option<TcpListener>,
     router: Arc<Router>,
     assets_path: PathBuf,
     addr: String,
+    workers: usize,
 }
 
 impl Server {
@@ -87,6 +95,15 @@ impl Server {
         self
     }
 
+    /// Sets the number of worker threads. Each worker runs an independent
+    /// event loop with its own connection set; the OS distributes incoming
+    /// connections across workers (via `SO_REUSEPORT` on Linux, a shared
+    /// listening socket elsewhere). Defaults to 1.
+    pub fn workers(&mut self, n: usize) -> &mut Self {
+        self.workers = n.max(1);
+        self
+    }
+
     fn new_with_assets(addr: &str, assets_path: PathBuf) -> io::Result<Self> {
         let init_start = Instant::now();
         let router = Arc::new(Router::new());
@@ -97,31 +114,161 @@ impl Server {
 
         Ok(Server {
             init_start,
-            listener: None,
             router,
             assets_path,
             addr: addr.to_string(),
+            workers: 1,
         })
+    }
+
+    fn bind_listener(addr: &str) -> io::Result<TcpListener> {
+        let listener = TcpListener::bind(addr)?;
+        listener.set_nonblocking(true)?;
+        Ok(listener)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn bind_reuseport_listener(addr: &str) -> io::Result<TcpListener> {
+        use std::net::SocketAddr;
+        use std::os::unix::io::FromRawFd;
+
+        let sock_addr: SocketAddr = addr
+            .parse()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        let (domain, addr_ptr, addr_len) = match sock_addr {
+            SocketAddr::V4(ref a) => (
+                libc::AF_INET,
+                a as *const libc::sockaddr_in as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            ),
+            SocketAddr::V6(ref a) => (
+                libc::AF_INET6,
+                a as *const libc::sockaddr_in6 as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            ),
+        };
+
+        unsafe {
+            let fd = libc::socket(
+                domain,
+                libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+                0,
+            );
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let on: libc::c_int = 1;
+            let opt_len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+
+            if libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_REUSEADDR,
+                &on as *const libc::c_int as *const libc::c_void,
+                opt_len,
+            ) < 0
+                || libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_REUSEPORT,
+                    &on as *const libc::c_int as *const libc::c_void,
+                    opt_len,
+                ) < 0
+            {
+                let err = io::Error::last_os_error();
+                libc::close(fd);
+                return Err(err);
+            }
+
+            if libc::bind(fd, addr_ptr, addr_len) < 0 || libc::listen(fd, libc::SOMAXCONN) < 0 {
+                let err = io::Error::last_os_error();
+                libc::close(fd);
+                return Err(err);
+            }
+
+            Ok(TcpListener::from_raw_fd(fd))
+        }
+    }
+
+    fn bind_listeners(addr: &str, count: usize) -> io::Result<Vec<TcpListener>> {
+        #[cfg(target_os = "linux")]
+        {
+            (0..count)
+                .map(|_| Self::bind_reuseport_listener(addr))
+                .collect()
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            // Other Unix systems have no reliable REUSEPORT load balancing;
+            // share one listening socket by duplicating its descriptor.
+            // Non-blocking mode lives on the shared open file description,
+            // so setting it once covers all duplicates.
+            let primary = Self::bind_listener(addr)?;
+            let mut listeners = Vec::with_capacity(count);
+            listeners.push(primary);
+            while listeners.len() < count {
+                listeners.push(listeners[0].try_clone()?);
+            }
+            Ok(listeners)
+        }
     }
 
     /// Run polling
     pub fn run(&mut self) -> io::Result<()> {
-        let listener = TcpListener::bind(&self.addr).map_err(|e| {
+        let workers = self.workers.max(1);
+        let mut listeners = Self::bind_listeners(&self.addr, workers).map_err(|e| {
             io::Error::new(
                 e.kind(),
                 format!("failed to bind server to {}: {}", self.addr, e),
             )
         })?;
 
-        listener.set_nonblocking(true).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("failed to set listener to non-blocking mode: {}", e),
-            )
-        })?;
+        let local_addr = listeners[0].local_addr()?;
+        let ctx = Arc::new(WorkerCtx {
+            router: Arc::clone(&self.router),
+            assets_path: self.assets_path.clone(),
+        });
 
-        self.listener = Some(listener);
-        self.run_loop()
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let main_listener = listeners.swap_remove(0);
+
+        let mut handles = Vec::with_capacity(listeners.len());
+        for (i, listener) in listeners.into_iter().enumerate() {
+            let ctx = Arc::clone(&ctx);
+            let shutdown = Arc::clone(&shutdown);
+
+            let handle = thread::Builder::new()
+                .name(format!("r-server-worker-{}", i + 1))
+                .spawn(move || Self::event_loop(&listener, &ctx, &shutdown))
+                .map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::OutOfMemory,
+                        format!("failed to spawn worker thread {}: {}", i + 1, e),
+                    )
+                })?;
+            handles.push(handle);
+        }
+
+        info!(
+            "HTTP server started on http://{} with {} worker(s) in {}µs",
+            local_addr,
+            workers,
+            self.init_start.elapsed().as_micros()
+        );
+
+        // Run the primary worker on the calling thread.
+        let result = Self::event_loop(&main_listener, &ctx, &shutdown);
+
+        // Signal auxiliary workers to stop and wait for them.
+        shutdown.store(true, Ordering::Relaxed);
+        for handle in handles {
+            let _ = handle.join();
+        }
+
+        result
     }
 
     pub fn route(
@@ -188,7 +335,7 @@ impl Server {
         }
     }
 
-    fn handle_read(&mut self, conn: &mut Connection<TcpStream>) -> io::Result<bool> {
+    fn handle_read(ctx: &WorkerCtx, conn: &mut Connection<TcpStream>) -> io::Result<bool> {
         let mut buf = [0; 1024];
 
         loop {
@@ -226,16 +373,16 @@ impl Server {
             // Pass cloned Arc<dyn Metadata> instead of borrowed reference &conn.metadata
             let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
 
-            if let Some(handler_fn) = self.router.route(&mut request) {
+            if let Some(handler_fn) = ctx.router.route(&mut request) {
                 // Execute route handler inside middleware chain
-                self.router.handle(&request, &mut response, handler_fn);
+                ctx.router.handle(&request, &mut response, handler_fn);
             } else {
                 // Execute route for static resoueces
-                self.router.static_handle(
+                ctx.router.static_handle(
                     &request,
                     &mut response,
                     Self::static_handler,
-                    &self.assets_path, // Pass the static directory path
+                    &ctx.assets_path, // Pass the static directory path
                 );
             }
 
@@ -277,36 +424,26 @@ impl Server {
         }
     }
 
-    fn run_loop(&mut self) -> io::Result<()> {
-        self.listener
-            .as_ref()
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "listener has not been initialized",
-                )
-            })?
-            .set_nonblocking(true)?;
+    /// Single-worker polling loop. Each worker owns its listener and its
+    /// connections exclusively; no synchronization is needed on the hot path.
+    fn event_loop(listener: &TcpListener, ctx: &WorkerCtx, shutdown: &AtomicBool) -> io::Result<()> {
+        listener.set_nonblocking(true)?;
 
         let mut poll_fds: Vec<PollFd> = vec![PollFd {
-            fd: self.listener.as_ref().unwrap().as_raw_fd(),
+            fd: listener.as_raw_fd(),
             events: POLLIN,
             revents: 0,
         }];
 
         let mut connections: HashMap<i32, Connection<TcpStream>> = HashMap::new();
-
-        let startup_us = self.init_start.elapsed().as_micros();
-        let local_addr = self.listener.as_ref().unwrap().local_addr()?;
-
-        info!(
-            "HTTP server started on http://{} in {}µs",
-            local_addr, startup_us
-        );
-
         let mut indices_to_remove = Vec::new();
 
         loop {
+            if shutdown.load(Ordering::Relaxed) {
+                debug!("Worker shutting down");
+                return Ok(());
+            }
+
             for pfd in poll_fds.iter_mut() {
                 pfd.revents = 0;
             }
@@ -315,7 +452,7 @@ impl Server {
                 libc::poll(
                     poll_fds.as_mut_ptr() as *mut libc::pollfd,
                     poll_fds.len() as libc::nfds_t,
-                    -1, // 2-second timeout
+                    1_000, // Wake up periodically to check the shutdown flag
                 )
             };
 
@@ -338,7 +475,7 @@ impl Server {
             // Handle listener (index 0)
             if poll_fds[0].revents & POLLIN != 0 {
                 loop {
-                    match self.listener.as_ref().unwrap().accept() {
+                    match listener.accept() {
                         Ok((stream, addr)) => {
                             let fd = stream.as_raw_fd();
                             let conn = Connection::new(stream)?;
@@ -402,8 +539,7 @@ impl Server {
                 } else if revents & POLLIN != 0
                     && let Some(conn) = connections.get_mut(&fd)
                 {
-                    match self.handle_read(conn) {
-                        // match Self::handle_read(conn, &self.router, &self.assets_path) {
+                    match Self::handle_read(ctx, conn) {
                         Ok(true) => {
                             if !conn.write_buf.is_empty() {
                                 item.events = POLLOUT;
