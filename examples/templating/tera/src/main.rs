@@ -8,7 +8,7 @@ use tera::{Context, Tera};
 
 static TERA: LazyLock<Tera> = LazyLock::new(|| {
     let mut tera = Tera::default();
-    tera.load_from_glob("examples/templating/tera/templates/**/*.html")
+    tera.load_from_glob(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/**/*.html"))
         .expect("Failed to load templates");
     tera
 });
@@ -36,5 +36,6 @@ fn main() -> std::io::Result<()> {
                 }
             }
         })
+        .assets_path(concat!(env!("CARGO_MANIFEST_DIR"), "/templates"))
         .run()
 }
