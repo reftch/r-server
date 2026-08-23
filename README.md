@@ -23,7 +23,7 @@ Handles client requests to a different endpoint.
 
 ### `request`
 
-Handles parsing and representation of incoming HTTP requests from raw byte buffers into structured data including methods, headers, query parameters, and path parameters. Also includes `multipart/form-data` body parsing (`MultipartField`, `get_multipart_fields`).
+Handles parsing and representation of incoming HTTP requests from raw byte buffers into structured data including methods, headers, query parameters, and path parameters. Also includes unified form parsing for both `application/x-www-form-urlencoded` and `multipart/form-data` bodies (`FormField`, `get_form_fields`, `get_form_field`, `get_form_file`).
 
 ### `response`
 
@@ -227,20 +227,70 @@ fn main() -> std::io::Result<()> {
 }
 ```
 
+### Form Parameters
+
+The server parses `application/x-www-form-urlencoded` bodies out of the box. In a handler, call
+`req.get_form_field("name")` to read a single text field, or `req.get_form_fields()` to get all of
+them as a `Vec<FormField>`. Both accessors also work on `multipart/form-data` bodies (see the next
+section), so the same handler code can serve either encoding.
+
+A runnable version of this example lives in `examples/forms/form`.
+
+```rust
+use r_server::{core::http::Server, response::Status, router::Method};
+
+fn main() -> std::io::Result<()> {
+    Server::new()?
+        .route(Method::GET, "/", |_req, res| {
+            res.content_type(r_server::response::ContentType::HTML).body(
+                r#"<html>
+                    <body>
+                        <form action="/post" method="POST">
+                            <label for="name">Name:</label>
+                            <input name="name">
+                            <button type="submit">Submit form</button>
+                        </form>
+                    </body>
+                </html>"#,
+            );
+        })
+        .route(Method::POST, "/post", |req, res| {
+            match req.get_form_field("name") {
+                Ok(name) => res.body(format!("Your name is {name}")),
+                Err(e) => res.status(Status::BadRequest).body(e),
+            }
+        })
+        .run()?;
+
+    Ok(())
+}
+```
+
+You can also test it with `curl`:
+
+```bash
+curl -d "name=Alice" http://localhost:8080/post
+```
+
 ### Multipart (File Uploads)
 
-The server can parse `multipart/form-data` request bodies out of the box. In a handler, call
-`req.get_multipart_fields()` to get a `Vec<MultipartField>`. Each field contains:
+The server parses `multipart/form-data` request bodies out of the box. Every parsed field is a
+`FormField` containing:
 
 - `name`: The form field name (`name` attribute from `Content-Disposition`).
 - `filename`: The original filename for uploaded files (`None` for plain form fields).
 - `content_type`: The MIME type of the part, if provided.
 - `data`: The raw bytes of the part.
 
-A runnable version of this example lives in `examples/multipart`.
+Use `req.get_form_file("file")` to fetch a file upload by field name. It returns
+`Err` when the field is missing, is a text field, or when no file was selected (browsers submit
+file inputs without a selection as parts with `filename=""`), which makes it easy to respond with
+a 400.
+
+A runnable version of this example lives in `examples/forms/multipart`.
 
 ```rust
-use r_server::{core::http::Server, info, response::ContentType, router::Method};
+use r_server::{core::http::Server, info, response::{ContentType, Status}, router::Method};
 
 fn main() -> std::io::Result<()> {
     Server::new()?
@@ -259,21 +309,15 @@ fn main() -> std::io::Result<()> {
             );
         })
         .route(Method::POST, "/", |req, res| {
-            let fields = req.get_multipart_fields().expect("failed to parse multipart");
-
-            for field in fields {
-                match field.filename {
-                    Some(filename) => {
-                        info!("saving file {filename} ({} bytes)", field.data.len());
-                        std::fs::write(&filename, &field.data).expect("failed to write file");
-                    }
-                    None => {
-                        info!("field `{}` = {}", field.name, String::from_utf8_lossy(&field.data));
-                    }
+            match req.get_form_file("file") {
+                Ok(file) => {
+                    let filename = file.filename.unwrap_or_else(|| "upload.bin".into());
+                    info!("saving {filename} ({} bytes)", file.data.len());
+                    std::fs::write(&filename, &file.data).expect("failed to write file");
+                    res.body("Uploaded");
                 }
+                Err(e) => res.status(Status::BadRequest).body(e),
             }
-
-            res.body("Uploaded");
         })
         .run()?;
 
@@ -301,15 +345,15 @@ By default server try to find local directory `assets` and find there index.html
 
 ### `Server`
 
-| Method                                              | Description                                                                                                                                                                                                            |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new() -> IoResult<Self>`                           | Creates a new server instance. Reads `HOST`/`PORT` env vars, defaulting to `0.0.0.0:8080` for the HTTP server and `0.0.0.0:8443` for the HTTPS server.                                                                 |
-| `bind(host: &str, port: u16)`                       | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction. |
-| `assets_path(path: &str)`                           | Sets the directory for serving static files.                                                                                                                                                                           |
+| Method                                              | Description                                                                                                                                                                                                                                                    |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new() -> IoResult<Self>`                           | Creates a new server instance. Reads `HOST`/`PORT` env vars, defaulting to `0.0.0.0:8080` for the HTTP server and `0.0.0.0:8443` for the HTTPS server.                                                                                                         |
+| `bind(host: &str, port: u16)`                       | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction.                                         |
+| `assets_path(path: &str)`                           | Sets the directory for serving static files.                                                                                                                                                                                                                   |
 | `workers(n: usize)`                                 | Sets the number of worker threads. Each worker runs an independent event loop; the OS distributes connections across them (`SO_REUSEPORT` on Linux, a shared listening socket elsewhere). Values below 1 are clamped to 1. Defaults to 1. Returns `&mut Self`. |
-| `route(method, path, handler)`                      | Registers a new route with a specific HTTP method and path.                                                                                                                                                            |
-| `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                              |
-| `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                    |
+| `route(method, path, handler)`                      | Registers a new route with a specific HTTP method and path.                                                                                                                                                                                                    |
+| `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                                                                      |
+| `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                                                            |
 
 ### `Response` (Builder Pattern)
 
@@ -329,7 +373,17 @@ The `Request` object provided to handlers contains:
 - `.params`: A map of dynamic path parameters (e.g., `:id`).
 - `.headers`: A map of request headers.
 - `.query_params`: A map of URL query parameters.
-- `.get_multipart_fields() -> Result<Vec<MultipartField>, String>`: Parses a `multipart/form-data` body using the boundary from the `Content-Type` header.
+- `.get_form_fields() -> Result<Vec<FormField>, String>`: Parses the submitted form, dispatching on `Content-Type` (`application/x-www-form-urlencoded` or `multipart/form-data`).
+- `.get_form_field(name) -> Result<String, String>`: Gets a text field by name from either encoding. Errors if the field is missing or is a file upload.
+- `.get_form_file(name) -> Result<FormField, String>`: Gets a file-upload field by name (multipart forms only). Errors if the field is missing, is a text field, or if no file was selected (`filename=""`).
+
+Each `FormField` contains:
+
+- `.name`: The form field name.
+- `.filename`: The original filename for uploaded files (`None` for text fields).
+- `.content_type`: The MIME type of the part, if provided.
+- `.data`: The raw bytes of the part.
+- `.text()`: The payload decoded as UTF-8 (invalid bytes are replaced).
 
 ## Getting Started
 
