@@ -1,0 +1,7 @@
+[package]
+name = "templating-tera"
+edition = "2024"
+
+[dependencies]
+r-server = { path = "../../.." }
+tera = { version = "2", features = ["glob_fs"] }
