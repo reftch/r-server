@@ -4,7 +4,7 @@ use std::io::Cursor;
 
 use memchr::memchr;
 
-pub use multipart::MultipartField;
+pub use multipart::FormField;
 
 use crate::request::multipart::{extract_boundary_from_content_type, parse_multipart};
 
@@ -249,18 +249,136 @@ impl Request {
         }
     }
 
-    /// Gets the multipart fields
-    pub fn get_multipart_fields(&self) -> Result<Vec<MultipartField>, String> {
-        let content_type = self
-            .header("content-type")
-            .ok_or_else(|| "content-type not found".to_string())?;
+    /// Parses the submitted form, dispatching on Content-Type
+    /// (`application/x-www-form-urlencoded` or `multipart/form-data`).
+    pub fn get_form_fields(&self) -> Result<Vec<FormField>, String> {
+        match self.mime_type().as_deref() {
+            Some("application/x-www-form-urlencoded") => {
+                Ok(parse_urlencoded(&String::from_utf8_lossy(&self.body))
+                    .into_iter()
+                    .map(|(name, value)| FormField {
+                        name: name.to_string(),
+                        filename: None,
+                        content_type: None,
+                        data: value.to_string().into_bytes(),
+                    })
+                    .collect())
+            }
+            Some("multipart/form-data") => {
+                let content_type = self
+                    .header("content-type")
+                    .ok_or_else(|| "content-type not found".to_string())?;
 
-        let boundary = extract_boundary_from_content_type(content_type)
-            .ok_or_else(|| "boundary not found".to_string())?;
+                let boundary = extract_boundary_from_content_type(content_type)
+                    .ok_or_else(|| "boundary not found".to_string())?;
 
-        let cursor = Cursor::new(&self.body);
-        parse_multipart(cursor, &boundary)
+                parse_multipart(Cursor::new(&self.body), &boundary)
+            }
+            Some(other) => Err(format!("unsupported form content type '{other}'")),
+            None => Err("content-type not found".to_string()),
+        }
     }
+
+    /// Gets a text field by name from either encoding.
+    ///
+    /// Errors if the field is a file upload (use `get_form_file` instead).
+    pub fn get_form_field(&self, name: &str) -> Result<String, String> {
+        let field = self
+            .find_form_field(name)?
+            .ok_or_else(|| format!("Missing '{name}' field"))?;
+
+        if field.filename.is_some() {
+            return Err(format!(
+                "'{name}' is a file upload; use get_form_file('{name}')"
+            ));
+        }
+
+        Ok(field.text())
+    }
+
+    /// Gets a file-upload field by name (multipart forms only).
+    ///
+    /// Errors when the field is missing or is a text field, and also when no
+    /// file was selected (browsers submit such parts with `filename=""`).
+    pub fn get_form_file(&self, name: &str) -> Result<FormField, String> {
+        let field = self
+            .find_form_field(name)?
+            .ok_or_else(|| format!("Missing '{name}' field"))?;
+
+        if field.filename.is_none() {
+            return Err(format!(
+                "'{name}' is a text field; use get_form_field('{name}')"
+            ));
+        }
+
+        if field.filename.as_deref().unwrap_or_default().is_empty() {
+            return Err(format!("No file selected for '{name}'"));
+        }
+
+        Ok(field)
+    }
+
+    fn find_form_field(&self, name: &str) -> Result<Option<FormField>, String> {
+        Ok(self.get_form_fields()?.into_iter().find(|f| f.name == name))
+    }
+}
+
+fn parse_urlencoded(body: &str) -> Vec<KeyValuePair> {
+    let mut params = Vec::new();
+
+    for pair in body.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+
+        let (key, value) = match memchr(b'=', pair.as_bytes()) {
+            Some(eq) => (&pair[..eq], &pair[eq + 1..]),
+            None => (pair, ""),
+        };
+
+        params.push((percent_decode(key).into(), percent_decode(value).into()));
+    }
+
+    params
+}
+
+fn percent_decode(input: &str) -> String {
+    fn hex_val(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                    out.push(hi << 4 | lo);
+                    i += 3;
+                } else {
+                    out.push(b'%');
+                    i += 1;
+                }
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&out).to_string()
 }
 
 #[cfg(test)]

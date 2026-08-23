@@ -21,8 +21,8 @@ COPY examples ./examples
 
 # Build a statically linked binary
 # The musl target produces a fully static binary by default
-RUN cargo build --release --example $ARTIFACT --target $TARGETARCH-unknown-linux-musl && \
-    cp target/$TARGETARCH-unknown-linux-musl/release/examples/$ARTIFACT /application
+RUN cargo build --release -p $ARTIFACT --target $TARGETARCH-unknown-linux-musl && \
+    cp target/$TARGETARCH-unknown-linux-musl/release/$ARTIFACT /application
 
 # Create cerificates
 # RUN openssl req -x509 -noenc -keyout key.pem -out cert.pem -subj /CN=0.0.0.0

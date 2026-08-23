@@ -13,10 +13,10 @@ pub struct Client {
 }
 
 impl Client {
-    /// Creates a new `Client` instance. 
-    /// 
+    /// Creates a new `Client` instance.
+    ///
     /// The `host` parameter can include a scheme like `http://` or `https://`.
-    /// If a scheme is provided, it is stripped, and the `is_secure` flag and 
+    /// If a scheme is provided, it is stripped, and the `is_secure` flag and
     /// appropriate port (443 for https, 80 for http) are set accordingly.
     pub fn new(host: impl Into<String>) -> Self {
         let host_str = host.into();
@@ -45,7 +45,7 @@ impl Client {
     }
 
     /// Executes an HTTP request with the given method, path, and optional body.
-    /// 
+    ///
     /// This method handles stream creation, request construction, and response reading,
     /// including support for chunked transfer encoding.
     fn execute(&self, method: &str, path: &str, body: Option<String>) -> Result<String, String> {

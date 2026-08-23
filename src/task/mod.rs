@@ -9,8 +9,8 @@ use std::{
 };
 
 use crate::{
-    response::{ContentType, Response, Status},
     core::metadata::Metadata,
+    response::{ContentType, Response, Status},
 };
 
 type Cancel = Arc<AtomicBool>;

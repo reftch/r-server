@@ -152,8 +152,7 @@ mod tests {
 
         thread::sleep(Duration::from_millis(100));
 
-        let fetch =
-            |id: u8| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let fetch = |id: u8| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
             let mut stream = TcpStream::connect("127.0.0.1:18082")?;
             stream.set_read_timeout(Some(Duration::from_secs(2)))?;
             stream.set_write_timeout(Some(Duration::from_secs(2)))?;

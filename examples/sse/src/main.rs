@@ -16,7 +16,7 @@ fn home_handler(_req: &Request, res: &mut Response) {
                     <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta6/dist/htmx.min.js"></script>
                     <script src="https://cdn.jsdelivr.net/npm/htmx.org@4.0.0-beta6/dist/ext/hx-sse.min.js"></script>
                 </head>
-                <body>
+                <body style="background-color: #222; color: #eee;">
                 <div
                     hx-sse:connect="/stream"
                     hx-target='#count'
@@ -36,7 +36,7 @@ fn main() -> std::io::Result<()> {
             task::repeat_every(
                 req.path.to_string(),
                 &*res.metadata,
-                Duration::from_millis(50),
+                Duration::from_millis(500),
                 |res| {
                     let _ = res.stream(&format!(
                         "{}\n\n",
@@ -45,7 +45,7 @@ fn main() -> std::io::Result<()> {
                 },
             );
         })
-        .workers(2)
         .run()?;
+
     Ok(())
 }

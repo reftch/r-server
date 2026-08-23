@@ -121,6 +121,5 @@ macro_rules! error {
     };
 }
 
-
 #[cfg(test)]
 mod tests;

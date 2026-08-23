@@ -4,11 +4,18 @@ use std::io::{BufRead, BufReader, Read};
 use memchr::memchr;
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct MultipartField {
+pub struct FormField {
     pub name: String,
     pub filename: Option<String>,
     pub content_type: Option<String>,
     pub data: Vec<u8>,
+}
+
+impl FormField {
+    /// Field payload decoded as UTF-8 (invalid bytes are replaced).
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.data).to_string()
+    }
 }
 
 /// Case-insensitive header lookup helper that never mutates the underlying map.
@@ -45,7 +52,7 @@ pub fn extract_boundary_from_content_type(content_type: &str) -> Option<String> 
 }
 
 /// Parses a multipart request stream using the specified boundary.
-pub fn parse_multipart<R: Read>(reader: R, boundary: &str) -> Result<Vec<MultipartField>, String> {
+pub fn parse_multipart<R: Read>(reader: R, boundary: &str) -> Result<Vec<FormField>, String> {
     let mut buf_reader = BufReader::new(reader);
     let boundary_bytes = format!("--{}", boundary).into_bytes();
 
@@ -96,7 +103,7 @@ fn skip_preamble<R: BufRead>(reader: &mut R, boundary_bytes: &[u8]) -> Result<bo
 fn parse_single_part<R: BufRead>(
     reader: &mut R,
     boundary_bytes: &[u8],
-) -> Result<(MultipartField, bool), String> {
+) -> Result<(FormField, bool), String> {
     let headers = read_part_headers(reader)?;
 
     let cd = get_header_ignore_case(&headers, "content-disposition")
@@ -109,7 +116,7 @@ fn parse_single_part<R: BufRead>(
 
     let (data, is_closing) = read_part_body(reader, boundary_bytes)?;
 
-    let field = MultipartField {
+    let field = FormField {
         name,
         filename,
         content_type,

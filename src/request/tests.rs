@@ -157,11 +157,20 @@ mod tests {
         assert_eq!(request.path, "/upload".into());
         assert_eq!(request.body, mp_body);
 
-        let fields = request.get_multipart_fields().expect("multipart parse");
+        let fields = request.get_form_fields().expect("form parse");
         assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "file");
         assert_eq!(fields[0].filename.as_deref(), Some("img.png"));
         assert_eq!(fields[0].content_type.as_deref(), Some("image/png"));
         assert_eq!(fields[0].data, file_data, "uploaded binary corrupted");
+
+        let file = request.get_form_file("file").expect("file field");
+        assert_eq!(file.data, file_data);
+
+        assert_eq!(
+            request.get_form_field("file"),
+            Err("'file' is a file upload; use get_form_file('file')".to_string())
+        );
     }
 
     #[test]
@@ -218,5 +227,176 @@ mod tests {
         let buf = b"POST / HTTP/1.1\r\ncontent-LENGTH: 5\r\n\r\nhello";
         let request = Request::parse(buf).expect("Should parse valid request");
         assert_eq!(request.body, b"hello");
+    }
+
+    fn build_form_request(body: &str) -> Request {
+        let raw = format!(
+            "POST / HTTP/1.1\r\n\
+             Content-Type: application/x-www-form-urlencoded\r\n\
+             Content-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        Request::parse(raw.as_bytes()).expect("Should parse form request")
+    }
+
+    #[test]
+    fn test_request_get_form_fields() {
+        let request = build_form_request("name=Alice&age=30");
+        let fields = request.get_form_fields().expect("form parse");
+
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "name");
+        assert_eq!(fields[0].text(), "Alice");
+        assert_eq!(fields[0].filename, None);
+        assert_eq!(fields[1].name, "age");
+        assert_eq!(fields[1].data, b"30");
+
+        assert_eq!(request.get_form_field("name"), Ok("Alice".to_string()));
+        assert_eq!(request.get_form_field("age"), Ok("30".to_string()));
+    }
+
+    #[test]
+    fn test_request_get_form_field_percent_decoding() {
+        let request = build_form_request("full=Alice+Smith&sym=%21%40%23&empty=&nokey&x=a%3Db");
+        let fields = request.get_form_fields().expect("form parse");
+        assert_eq!(fields.len(), 5);
+
+        assert_eq!(
+            request.get_form_field("full"),
+            Ok("Alice Smith".to_string())
+        );
+        assert_eq!(request.get_form_field("sym"), Ok("!@#".to_string()));
+        assert_eq!(request.get_form_field("empty"), Ok(String::new()));
+        assert_eq!(request.get_form_field("nokey"), Ok(String::new()));
+        assert_eq!(request.get_form_field("x"), Ok("a=b".to_string()));
+    }
+
+    #[test]
+    fn test_request_get_form_field_missing() {
+        let request = build_form_request("name=Alice");
+        assert_eq!(
+            request.get_form_field("missing"),
+            Err("Missing 'missing' field".to_string())
+        );
+    }
+
+    #[test]
+    fn test_request_get_form_fields_wrong_content_type() {
+        let buf =
+            b"POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+        let request = Request::parse(buf).expect("Should parse valid request");
+
+        assert!(request.get_form_fields().is_err());
+        assert!(request.get_form_field("name").is_err());
+    }
+
+    #[test]
+    fn test_request_get_form_fields_empty_body() {
+        let buf = b"POST / HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 0\r\n\r\n";
+        let request = Request::parse(buf).expect("Should parse valid request");
+
+        assert!(request.get_form_fields().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_request_unified_form_api_on_multipart() {
+        let boundary = "UNIFIED";
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            b"--UNIFIED\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nAlice\r\n",
+        );
+        body.extend_from_slice(
+            b"--UNIFIED\r\n\
+             Content-Disposition: form-data; name=\"avatar\"; filename=\"a.png\"\r\n\
+             Content-Type: image/png\r\n\r\nPNGDATA\r\n",
+        );
+        body.extend_from_slice(b"--UNIFIED--\r\n");
+
+        let raw = format!(
+            "POST /upload HTTP/1.1\r\n\
+             Content-Type: multipart/form-data; boundary={}\r\n\
+             Content-Length: {}\r\n\r\n",
+            boundary,
+            body.len()
+        );
+        let mut raw = raw.into_bytes();
+        raw.extend_from_slice(&body);
+
+        let request = Request::parse(&raw).expect("Should parse multipart request");
+        let fields = request.get_form_fields().expect("form parse");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].text(), "Alice");
+
+        assert_eq!(
+            request.get_form_field("name"),
+            Ok("Alice".to_string()),
+            "same accessor as urlencoded forms"
+        );
+
+        let file = request.get_form_file("avatar").expect("file field");
+        assert_eq!(file.filename.as_deref(), Some("a.png"));
+        assert_eq!(file.content_type.as_deref(), Some("image/png"));
+        assert_eq!(file.data, b"PNGDATA");
+
+        assert_eq!(
+            request.get_form_field("avatar"),
+            Err("'avatar' is a file upload; use get_form_file('avatar')".to_string())
+        );
+        assert_eq!(
+            request.get_form_file("name"),
+            Err("'name' is a text field; use get_form_field('name')".to_string())
+        );
+    }
+
+    #[test]
+    fn test_request_get_form_file_on_urlencoded_body() {
+        let request = build_form_request("name=Alice");
+
+        assert_eq!(
+            request.get_form_file("name"),
+            Err("'name' is a text field; use get_form_field('name')".to_string())
+        );
+    }
+
+    #[test]
+    fn test_request_get_form_file_no_file_selected() {
+        // Browsers submit file inputs with `filename=""` when nothing was picked
+        let boundary = "NOFILE";
+        let mut body = Vec::new();
+        body.extend_from_slice(
+            b"--NOFILE\r\n\
+             Content-Disposition: form-data; name=\"file\"; filename=\"\"\r\n\
+             Content-Type: application/octet-stream\r\n\r\n\r\n",
+        );
+        body.extend_from_slice(b"--NOFILE--\r\n");
+
+        let raw = format!(
+            "POST / HTTP/1.1\r\n\
+             Content-Type: multipart/form-data; boundary={}\r\n\
+             Content-Length: {}\r\n\r\n",
+            boundary,
+            body.len()
+        );
+        let mut raw = raw.into_bytes();
+        raw.extend_from_slice(&body);
+
+        let request = Request::parse(&raw).expect("Should parse multipart request");
+        assert_eq!(
+            request.get_form_file("file"),
+            Err("No file selected for 'file'".to_string())
+        );
+    }
+
+    #[test]
+    fn test_request_unsupported_form_content_type_message() {
+        let buf =
+            b"POST / HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+        let request = Request::parse(buf).expect("Should parse valid request");
+
+        assert_eq!(
+            request.get_form_fields(),
+            Err("unsupported form content type 'application/json'".to_string())
+        );
     }
 }

@@ -38,10 +38,11 @@ resolver = "2"
 members = [
     ".",
     "examples/client",
+    "examples/forms/form",
+    "examples/forms/multipart",
     "examples/http",
     "examples/https",
     "examples/middleware",
-    "examples/multipart",
     "examples/rest",
     "examples/sse",
     "examples/static",

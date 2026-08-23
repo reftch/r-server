@@ -1,4 +1,4 @@
-use r_server::{core::http::Server, info, router::Method};
+use r_server::{core::http::Server, info, response::Status, router::Method};
 
 fn main() -> std::io::Result<()> {
     Server::new()?
@@ -17,27 +17,17 @@ fn main() -> std::io::Result<()> {
                 );
         })
         .route(Method::POST, "/", |req, res| {
-            let fields = req
-                .get_multipart_fields()
-                .expect("failed to parse multipart");
-
-            for field in fields {
-                match field.filename {
-                    Some(filename) => {
-                        info!("saving file {filename} ({} bytes)", field.data.len());
-                        std::fs::write(&filename, &field.data).expect("failed to write file");
-                    }
-                    None => {
-                        info!(
-                            "field `{}` = {}",
-                            field.name,
-                            String::from_utf8_lossy(&field.data)
-                        );
-                    }
+            match req.get_form_file("file") {
+                Ok(file) => {
+                    let filename = file.filename.unwrap_or_else(|| "upload.bin".into());
+                    info!("saving {filename} ({} bytes)", file.data.len());
+                    std::fs::write(&filename, &file.data).expect("failed to write file");
+                    res.body("Uploaded");
+                }
+                Err(e) => {
+                    res.status(Status::BadRequest).body(e);
                 }
             }
-
-            res.body("Uploaded");
         })
         .run()?;
     Ok(())
