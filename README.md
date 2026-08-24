@@ -10,6 +10,7 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 - **Middleware**: Pluggable request pipeline via `fn(&Request, &mut Response, Next)`, chained with `use_middleware` to run logic (logging, timing, auth) for every request before it reaches the handler.
 - **Static File Serving**: Built-in support for serving assets from a designated directory with automatic MIME type detection.
 - **Multipart Support**: Built-in parsing of `multipart/form-data` requests for handling file uploads and form fields.
+- **Server-Side Sessions**: Optional browser sessions backed by a thread-safe store shared across workers. Each request receives a cloneable `Session` handle; cookies (`HttpOnly`, `SameSite=Lax`) are managed automatically.
 - **Modular Architecture**: Separated into specialized modules for requests, responses, routing, and server logic.
 - **Client**: A HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests. It supports both HTTP and HTTPS via SSL/TLS.
 
@@ -32,6 +33,10 @@ Manages the construction of HTTP responses. It provides an expressive Builder-st
 ### `router`
 
 Implements a high-performance Trie-based router that supports both static paths and dynamic parameters (e.g., `/users/:id`). It efficiently matches requests to handlers in $O(path\_length)$ time regardless of the number of routes. It also provides a middleware pipeline: every request passes through registered middleware (via `use_middleware`) before reaching its handler, and through the same pipeline for static file serving.
+
+### `session`
+
+Server-side browser sessions. A `SessionStore` owns all live sessions and is shared across worker threads. For each request the connection layer resolves the session from the `Cookie` header (`SID` cookie) or mints a fresh one, and attaches a cheap, cloneable `Session` handle to the request. Sessions idle longer than the configured TTL are swept automatically; session ids are generated with OpenSSL's CSPRNG.
 
 ### `server`
 
@@ -331,6 +336,77 @@ You can also test it with `curl`:
 curl -F "file=@photo.jpg" http://localhost:8080/
 ```
 
+### Sessions
+
+The server supports optional server-side sessions. Enable them with `sessions_ttl(secs)` — every
+parsed request then receives a session handle at `req.session()`. The session is resolved from the
+`SID` cookie (or minted fresh for new visitors), and the server sets/expires the cookie
+automatically after dispatch (`HttpOnly`, `SameSite=Lax`, `Max-Age` equal to the TTL). Sessions are
+shared state: all methods take `&self`, so handlers mutate them through interior mutability.
+
+- `session.id()`: The opaque session identifier stored in the browser cookie.
+- `session.get(key) -> Option<String>` / `session.set(key, value)` / `session.remove(key)`: Arbitrary per-session data.
+- `session.destroy()`: Marks the session as ended; the store evicts it and the browser cookie is expired.
+
+A runnable version of this example lives in `examples/session`.
+
+```rust
+use r_server::{
+    core::http::Server,
+    request::Request,
+    response::{ContentType, Response, Status},
+    router::Method,
+};
+
+fn login(req: &Request, res: &mut Response) {
+    match (req.get_form_field("username"), req.session()) {
+        (Ok(username), Some(session)) => {
+            session.set("user_id", username);
+            res.status(Status::MovedTemporarily)
+                .header("Location", "/")
+                .body("Redirecting...");
+        }
+        (_, None) => res.status(Status::InternalServerError).body("sessions are not enabled"),
+        (Err(_), _) => res.status(Status::BadRequest).body("missing 'username' field"),
+    }
+}
+
+fn main() -> std::io::Result<()> {
+    Server::new()?
+        .sessions_ttl(3600) // sessions survive 1h of inactivity
+        .route(Method::GET, "/", |req, res| {
+            let user = req.session().and_then(|s| s.get("user_id"));
+            let page = match user {
+                Some(user) => format!("<h1>Hello, {user}</h1>"),
+                None => "<h1>Guest</h1>".to_string(),
+            };
+            res.content_type(ContentType::HTML).body(page);
+        })
+        .route(Method::POST, "/login", login)
+        .route(Method::POST, "/logout", |req, res| {
+            if let Some(session) = req.session() {
+                session.destroy();
+            }
+            res.status(Status::MovedTemporarily)
+                .header("Location", "/")
+                .body("Redirecting...");
+        })
+        .run()?;
+
+    Ok(())
+}
+```
+
+You can also test it with `curl`:
+
+```bash
+# Log in; -c stores the session cookie
+curl -d "username=Alice" -c cookies.txt http://localhost:8080/login
+
+# Subsequent requests carry the cookie and resolve the same session (-b sends it)
+curl -b cookies.txt http://localhost:8080/
+```
+
 ### Static resources
 
 By default server try to find local directory `assets` and find there index.html. For example:
@@ -352,8 +428,9 @@ By default server try to find local directory `assets` and find there index.html
 | `assets_path(path: &str)`                           | Sets the directory for serving static files.                                                                                                                                                                                                                   |
 | `workers(n: usize)`                                 | Sets the number of worker threads. Each worker runs an independent event loop; the OS distributes connections across them (`SO_REUSEPORT` on Linux, a shared listening socket elsewhere). Values below 1 are clamped to 1. Defaults to 1. Returns `&mut Self`. |
 | `route(method, path, handler)`                      | Registers a new route with a specific HTTP method and path.                                                                                                                                                                                                    |
-| `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                                                                      |
-| `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                                                            |
+| `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                                                                                                                                      |
+| `sessions_ttl(ttl_secs: u64)`                       | Enables server-side browser sessions with the given idle timeout. Every parsed request receives a session handle at `request.session()`; sessions are resolved from the `Cookie` header or minted fresh, and a new session is announced to the browser via a `Set-Cookie` header on the response. Disabled by default. Returns `&mut Self`. |
+| `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                                                                                                                            |
 
 ### `Response` (Builder Pattern)
 
@@ -376,6 +453,7 @@ The `Request` object provided to handlers contains:
 - `.get_form_fields() -> Result<Vec<FormField>, String>`: Parses the submitted form, dispatching on `Content-Type` (`application/x-www-form-urlencoded` or `multipart/form-data`).
 - `.get_form_field(name) -> Result<String, String>`: Gets a text field by name from either encoding. Errors if the field is missing or is a file upload.
 - `.get_form_file(name) -> Result<FormField, String>`: Gets a file-upload field by name (multipart forms only). Errors if the field is missing, is a text field, or if no file was selected (`filename=""`).
+- `.session: Option<Session>` / `.session() -> Option<&Session>`: The browser session handle attached by the server when sessions were enabled with `Server::sessions_ttl`; `None` otherwise. See the Sessions section.
 
 Each `FormField` contains:
 
