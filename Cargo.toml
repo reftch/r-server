@@ -49,5 +49,6 @@ members = [
     "examples/templating/askama",
     "examples/templating/handlebars",
     "examples/templating/minijinja",
+    "examples/templating/sailfish",
     "examples/templating/tera",
 ]
