@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::core::STATIC_DIRECTORY;
 use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::core::metadata::Metadata;
 use crate::request::Request;
@@ -82,7 +83,7 @@ impl Server {
 
         let addr = format!("{}:{}", host, port);
 
-        Self::new_with_assets(&addr, PathBuf::from("./assets"))
+        Self::new_with_assets(&addr, PathBuf::from(STATIC_DIRECTORY))
     }
 
     pub fn bind(&mut self, host: &str, port: u16) -> &mut Self {

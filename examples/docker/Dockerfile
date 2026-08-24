@@ -1,4 +1,4 @@
-ARG ARTIFACT=rest
+ARG ARTIFACT=templating-askama
 
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries
@@ -43,6 +43,7 @@ ARG ARTIFACT
 # Copy the statically linked binary
 COPY --from=builder /application /application
 # COPY --from=builder /app/examples/$ARTIFACT/assets /assets
+COPY --from=builder /app/examples/templating/askama/templates /templates
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
