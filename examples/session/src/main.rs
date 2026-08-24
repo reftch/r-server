@@ -75,8 +75,6 @@ fn main() -> std::io::Result<()> {
         .route(Method::GET, "/", index)
         .route(Method::GET, "/whoami", whoami)
         .route(Method::POST, "/login", login)
-        // The logout link on the index page issues a plain GET; accept both
-        // so the anchor and a POST form both work.
         .route(Method::GET, "/logout", logout)
         .route(Method::POST, "/logout", logout)
         .run()?;

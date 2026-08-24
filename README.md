@@ -341,7 +341,9 @@ curl -F "file=@photo.jpg" http://localhost:8080/
 The server supports optional server-side sessions. Enable them with `sessions_ttl(secs)` — every
 parsed request then receives a session handle at `req.session()`. The session is resolved from the
 `SID` cookie (or minted fresh for new visitors), and the server sets/expires the cookie
-automatically after dispatch (`HttpOnly`, `SameSite=Lax`, `Max-Age` equal to the TTL). Sessions are
+automatically after dispatch (`HttpOnly`, `SameSite=Lax`, `Max-Age` equal to the TTL). Passing a
+negative value such as `sessions_ttl(-1)` creates infinite sessions: they never expire on
+inactivity and the `SID` cookie is sent without `Max-Age`. Sessions are
 shared state: all methods take `&self`, so handlers mutate them through interior mutability.
 
 - `session.id()`: The opaque session identifier stored in the browser cookie.
@@ -429,7 +431,7 @@ By default server try to find local directory `assets` and find there index.html
 | `workers(n: usize)`                                 | Sets the number of worker threads. Each worker runs an independent event loop; the OS distributes connections across them (`SO_REUSEPORT` on Linux, a shared listening socket elsewhere). Values below 1 are clamped to 1. Defaults to 1. Returns `&mut Self`. |
 | `route(method, path, handler)`                      | Registers a new route with a specific HTTP method and path.                                                                                                                                                                                                    |
 | `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                                                                                                                                      |
-| `sessions_ttl(ttl_secs: u64)`                       | Enables server-side browser sessions with the given idle timeout. Every parsed request receives a session handle at `request.session()`; sessions are resolved from the `Cookie` header or minted fresh, and a new session is announced to the browser via a `Set-Cookie` header on the response. Disabled by default. Returns `&mut Self`. |
+| `sessions_ttl(ttl_secs: i64)`                       | Enables server-side browser sessions with the given idle timeout; a negative value (e.g. `-1`) means sessions never expire. Every parsed request receives a session handle at `request.session()`; sessions are resolved from the `Cookie` header or minted fresh, and a new session is announced to the browser via a `Set-Cookie` header on the response. Disabled by default. Returns `&mut Self`. |
 | `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                                                                                                                            |
 
 ### `Response` (Builder Pattern)

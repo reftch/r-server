@@ -13,16 +13,18 @@ fn is_hex_sid(sid: &str) -> bool {
 fn creates_new_session_without_cookie() {
     let store = SessionStore::new(3600);
 
+    let before = now_secs();
     let (session, is_new) = store.get_or_create(None);
 
     assert!(is_new);
     assert!(is_hex_sid(&session.id()));
     assert_eq!(store.len(), 1);
 
-    let now = now_secs();
     let inner = lock(&session.0);
-    assert_eq!(inner.created_at, now);
-    assert_eq!(inner.last_activity, now);
+    // The second boundary may tick during creation; accept both seconds.
+    assert!(inner.created_at >= before.saturating_sub(1));
+    assert!(inner.created_at <= now_secs());
+    assert_eq!(inner.last_activity, inner.created_at);
     assert!(inner.data.is_empty());
 }
 
@@ -108,6 +110,34 @@ fn sweep_drops_idle_sessions() {
 }
 
 #[test]
+fn infinite_sessions_never_expire_on_lookup() {
+    let store = SessionStore::infinite();
+    let (session, _) = store.get_or_create(None);
+
+    // Backdate far beyond any finite TTL; an infinite store must still reuse.
+    lock(&session.0).last_activity = now_secs().saturating_sub(SWEEP_INTERVAL_SECS * 1_000);
+
+    let (reused, is_new) = store.get_or_create(Some(&session.id()));
+
+    assert!(!is_new);
+    assert_eq!(reused.id(), session.id());
+}
+
+#[test]
+fn infinite_sessions_survive_sweep() {
+    let store = SessionStore::infinite();
+    let (session, _) = store.get_or_create(None);
+    lock(&session.0).last_activity = now_secs().saturating_sub(3_600);
+
+    store.next_sweep.store(0, Ordering::Relaxed);
+    let (_, is_new) = store.get_or_create(Some(&session.id()));
+
+    assert!(!is_new);
+    assert_eq!(store.len(), 1);
+    assert_eq!(store.ttl(), None);
+}
+
+#[test]
 fn recent_sessions_survive_sweep() {
     let store = SessionStore::new(3600);
     let (session, _) = store.get_or_create(None);
@@ -146,8 +176,13 @@ fn ignores_missing_or_foreign_cookies() {
 #[test]
 fn builds_set_cookie_headers() {
     assert_eq!(
-        session_set_cookie("abc", 3600),
+        session_set_cookie("abc", Some(3600)),
         "SID=abc; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600"
+    );
+    // Infinite sessions omit Max-Age: browser-session cookie.
+    assert_eq!(
+        session_set_cookie("abc", None),
+        "SID=abc; Path=/; HttpOnly; SameSite=Lax"
     );
     assert_eq!(
         cleared_session_cookie(),

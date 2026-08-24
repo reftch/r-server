@@ -98,7 +98,8 @@ impl Session {
 /// Thread-safe container of live sessions shared by every worker thread.
 pub struct SessionStore {
     sessions: Mutex<HashMap<String, Session>>,
-    ttl_secs: u64,
+    /// Idle timeout in seconds; `None` means sessions never expire.
+    ttl_secs: Option<u64>,
     next_sweep: AtomicU64,
 }
 
@@ -107,14 +108,33 @@ impl SessionStore {
     pub fn new(ttl_secs: u64) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
-            ttl_secs,
+            ttl_secs: Some(ttl_secs),
             next_sweep: AtomicU64::new(0),
         }
     }
 
-    /// The configured idle timeout in seconds.
-    pub fn ttl(&self) -> u64 {
+    /// Creates a store whose sessions never expire on inactivity.
+    ///
+    /// They remain live until explicitly removed with [`Session::destroy`]
+    /// (plus [`SessionStore::destroy`]) or the server restarts.
+    pub fn infinite() -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            ttl_secs: None,
+            next_sweep: AtomicU64::new(0),
+        }
+    }
+
+    /// The configured idle timeout in seconds, or `None` for no expiry.
+    pub fn ttl(&self) -> Option<u64> {
         self.ttl_secs
+    }
+
+    fn is_expired(&self, session: &Session, now: u64) -> bool {
+        match self.ttl_secs {
+            Some(ttl) => session.idle_secs(now) >= ttl,
+            None => false,
+        }
     }
 
     /// Number of sessions currently tracked.
@@ -141,7 +161,7 @@ impl SessionStore {
 
             if let Some(existing) = map.get(sid) {
                 // Not yet idle long enough to expire: refresh activity.
-                if existing.idle_secs(now) < self.ttl_secs {
+                if !self.is_expired(existing, now) {
                     existing.touch(now);
                     return (existing.clone(), false);
                 }
@@ -180,7 +200,7 @@ impl SessionStore {
         self.next_sweep
             .store(now + SWEEP_INTERVAL_SECS, Ordering::Relaxed);
 
-        lock(&self.sessions).retain(|_, session| session.idle_secs(now) < self.ttl_secs);
+        lock(&self.sessions).retain(|_, session| !self.is_expired(session, now));
     }
 }
 
@@ -196,8 +216,17 @@ pub fn sid_from_cookie(cookie_header: &str) -> Option<&str> {
 }
 
 /// `Set-Cookie` header value establishing the session cookie.
-pub fn session_set_cookie(sid: &str, max_age_secs: u64) -> String {
-    format!("{SESSION_COOKIE}={sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}")
+///
+/// A `max_age_secs` of `None` (infinite server-side sessions) omits the
+/// `Max-Age` attribute, turning it into a browser-session cookie that lasts
+/// until the browser closes.
+pub fn session_set_cookie(sid: &str, max_age_secs: Option<u64>) -> String {
+    match max_age_secs {
+        Some(max_age) => {
+            format!("{SESSION_COOKIE}={sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
+        }
+        None => format!("{SESSION_COOKIE}={sid}; Path=/; HttpOnly; SameSite=Lax"),
+    }
 }
 
 /// `Set-Cookie` header value expiring the session cookie in the browser.

@@ -114,9 +114,14 @@ impl Server {
     /// sessions are resolved from the `Cookie` header or minted fresh, and a
     /// new session is announced to the browser via a `Set-Cookie` header on
     /// the response. Sessions idle for more than `ttl_secs` are dropped from
-    /// the store. Disabled by default. See [`crate::session`].
-    pub fn sessions_ttl(&mut self, ttl_secs: u64) -> &mut Self {
-        self.sessions = Some(Arc::new(SessionStore::new(ttl_secs)));
+    /// the store; a negative value such as `-1` means sessions never expire.
+    /// Disabled by default. See [`crate::session`].
+    pub fn sessions_ttl(&mut self, ttl_secs: i64) -> &mut Self {
+        self.sessions = Some(Arc::new(if ttl_secs < 0 {
+            SessionStore::infinite()
+        } else {
+            SessionStore::new(ttl_secs as u64)
+        }));
         self
     }
 
