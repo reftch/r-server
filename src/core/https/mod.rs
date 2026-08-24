@@ -20,6 +20,7 @@ use std::time::Instant;
 use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::{Next, Router};
+use crate::session::{SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie};
 
 #[repr(C)]
 struct PollFd {
@@ -134,6 +135,7 @@ struct WorkerCtx {
     router: Arc<Router>,
     assets_path: PathBuf,
     acceptor: Arc<SslAcceptor>,
+    sessions: Option<Arc<SessionStore>>,
 }
 
 pub struct Server {
@@ -141,6 +143,7 @@ pub struct Server {
     router: Arc<Router>,
     assets_path: PathBuf,
     acceptor: Arc<SslAcceptor>,
+    sessions: Option<Arc<SessionStore>>,
     addr: String,
     workers: usize,
 }
@@ -175,6 +178,18 @@ impl Server {
     /// listening socket elsewhere). Defaults to 1.
     pub fn workers(&mut self, n: usize) -> &mut Self {
         self.workers = n.max(1);
+        self
+    }
+
+    /// Enables server-side browser sessions with the given idle timeout.
+    ///
+    /// Every parsed request receives a session handle at `request.session()`;
+    /// sessions are resolved from the `Cookie` header or minted fresh, and a
+    /// new session is announced to the browser via a `Set-Cookie` header on
+    /// the response. Sessions idle for more than `ttl_secs` are dropped from
+    /// the store. Disabled by default. See [`crate::session`].
+    pub fn sessions_ttl(&mut self, ttl_secs: u64) -> &mut Self {
+        self.sessions = Some(Arc::new(SessionStore::new(ttl_secs)));
         self
     }
 
@@ -213,6 +228,7 @@ impl Server {
             router,
             assets_path,
             acceptor: Arc::new(acceptor),
+            sessions: None,
             addr: addr.to_string(),
             workers: 1,
         })
@@ -357,6 +373,7 @@ impl Server {
             router: Arc::clone(&self.router),
             assets_path: self.assets_path.clone(),
             acceptor: Arc::clone(&self.acceptor),
+            sessions: self.sessions.clone(),
         });
 
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -542,6 +559,17 @@ impl Server {
             let metadata: Arc<dyn Metadata> = Arc::new(conn.metadata.clone());
             let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
 
+            // Resolve the browser session (when enabled) before routing so
+            // handlers can read and mutate it; remember freshly minted ones
+            // so the cookie can be announced on the response below.
+            let mut attached_session = None;
+            if let Some(store) = &ctx.sessions {
+                let sid = request.header("cookie").and_then(sid_from_cookie);
+                let (session, is_new) = store.get_or_create(sid);
+                attached_session = Some((store.clone(), session.clone(), is_new));
+                request.session = Some(session);
+            }
+
             if let Some(handler_fn) = ctx.router.route(&mut request) {
                 ctx.router.handle(&request, &mut response, handler_fn);
             } else {
@@ -552,6 +580,18 @@ impl Server {
                     Self::static_handler,
                     &ctx.assets_path, // Pass the static directory path
                 );
+            }
+
+            // Announce or expire the session cookie after dispatch, since a
+            // handler may have created or destroyed the session mid-request.
+            if let Some((store, session, is_new)) = attached_session {
+                if session.is_destroyed() {
+                    store.destroy(&session.id());
+                    response.header("Set-Cookie", cleared_session_cookie());
+                } else if is_new {
+                    let sid = session.id();
+                    response.header("Set-Cookie", session_set_cookie(&sid, store.ttl()));
+                }
             }
 
             if response.body.is_empty() {

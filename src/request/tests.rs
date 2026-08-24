@@ -399,4 +399,14 @@ mod tests {
             Err("unsupported form content type 'application/json'".to_string())
         );
     }
+
+    #[test]
+    fn test_request_has_no_session_before_attachment() {
+        let buf = b"GET / HTTP/1.1\r\nCookie: SID=abc\r\n\r\n";
+        let request = Request::parse(buf).expect("Should parse valid request");
+
+        // The connection layer attaches the session after parsing; parsing
+        // alone never creates one.
+        assert!(request.session().is_none());
+    }
 }

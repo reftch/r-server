@@ -7,6 +7,7 @@ use memchr::memchr;
 pub use multipart::FormField;
 
 use crate::request::multipart::{extract_boundary_from_content_type, parse_multipart};
+use crate::session::Session;
 
 /// Represents an HTTP request without lifetime annotations.
 pub struct Request {
@@ -25,6 +26,9 @@ pub struct Request {
     pub query_params: Vec<KeyValuePair>,
     /// Raw body of request
     pub body: Vec<u8>,
+    /// Browser session resolved by the server when sessions are enabled
+    /// (see [`crate::session`]); `None` otherwise or before attachment.
+    pub session: Option<Session>,
 }
 
 /// Type alias for key-value string pairs used in headers and parameters.
@@ -134,6 +138,8 @@ impl Request {
             params: Vec::with_capacity(4),
             query_params,
             body: buf[header_end..header_end + body_len].to_vec(),
+            // Attached later by the connection layer when sessions are enabled.
+            session: None,
         })
     }
 
@@ -235,6 +241,16 @@ impl Request {
             .iter()
             .find(|(k, _)| &**k == name)
             .map(|(_, v)| &**v)
+    }
+
+    /// Returns the browser session handle attached by the server, if any.
+    ///
+    /// Always `None` unless sessions were enabled on the server with
+    /// `Server::sessions_ttl`. The session is shared state: mutation happens
+    /// through `&self` (see [`crate::session::Session`]).
+    #[inline]
+    pub fn session(&self) -> Option<&Session> {
+        self.session.as_ref()
     }
 
     /// Returns the MIME type (media type portion of Content-Type without parameters/charset).
