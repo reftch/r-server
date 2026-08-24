@@ -47,5 +47,6 @@ members = [
     "examples/sse",
     "examples/static",
     "examples/templating/askama",
+    "examples/templating/handlebars",
     "examples/templating/tera",
 ]

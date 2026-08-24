@@ -1,0 +1,8 @@
+[package]
+name = "templating-handlebars"
+edition = "2024"
+
+[dependencies]
+r-server = { path = "../../.." }
+handlebars = "6.4.4"
+serde_json = "1.0"
