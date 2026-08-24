@@ -52,4 +52,5 @@ members = [
     "examples/templating/sailfish",
     "examples/templating/tera",
     "examples/templating/tinytemplate",
+    "examples/templating/yarte",
 ]
