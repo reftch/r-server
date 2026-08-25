@@ -24,7 +24,7 @@ Handles client requests to a different endpoint.
 
 ### `request`
 
-Handles parsing and representation of incoming HTTP requests from raw byte buffers into structured data including methods, headers, query parameters, and path parameters. Also includes unified form parsing for both `application/x-www-form-urlencoded` and `multipart/form-data` bodies (`FormField`, `get_form_fields`, `get_form_field`, `get_form_file`).
+Handles parsing and representation of incoming HTTP requests from raw byte buffers into structured data including methods, headers, query parameters, and path parameters. Also includes unified form parsing for both `application/x-www-form-urlencoded` and `multipart/form-data` bodies (`FormField`, `get_form_fields`, `get_form_field`, `get_form_file`) and server-side browser sessions (`request::session`).
 
 ### `response`
 
@@ -33,10 +33,6 @@ Manages the construction of HTTP responses. It provides an expressive Builder-st
 ### `router`
 
 Implements a high-performance Trie-based router that supports both static paths and dynamic parameters (e.g., `/users/:id`). It efficiently matches requests to handlers in $O(path\_length)$ time regardless of the number of routes. It also provides a middleware pipeline: every request passes through registered middleware (via `use_middleware`) before reaching its handler, and through the same pipeline for static file serving.
-
-### `session`
-
-Server-side browser sessions. A `SessionStore` owns all live sessions and is shared across worker threads. For each request the connection layer resolves the session from the `Cookie` header (`SID` cookie) or mints a fresh one, and attaches a cheap, cloneable `Session` handle to the request. Sessions idle longer than the configured TTL are swept automatically; session ids are generated with OpenSSL's CSPRNG.
 
 ### `server`
 
@@ -349,6 +345,12 @@ shared state: all methods take `&self`, so handlers mutate them through interior
 - `session.id()`: The opaque session identifier stored in the browser cookie.
 - `session.get(key) -> Option<String>` / `session.set(key, value)` / `session.remove(key)`: Arbitrary per-session data.
 - `session.destroy()`: Marks the session as ended; the store evicts it and the browser cookie is expired.
+
+The session implementation lives in `r_server::request::session` and is also usable directly:
+a `SessionStore` owns all live sessions and is shared across worker threads; sessions idle
+longer than the configured TTL are swept automatically (destroyed sessions are evicted
+immediately), and session ids are generated with OpenSSL's CSPRNG. Each store entry tracks its
+lifecycle via a `SessionStatus` (`Active { last_activity }` or `Destroyed`).
 
 A runnable version of this example lives in `examples/session`.
 
