@@ -266,7 +266,10 @@ fn now_secs() -> u64 {
 
 fn generate_sid() -> String {
     let mut bytes = [0u8; SID_BYTES];
-    openssl::rand::rand_bytes(&mut bytes).expect("OpenSSL RNG must be available");
+    // The OS CSPRNG (via the tiny `getrandom` crate) instead of OpenSSL:
+    // referencing openssl::rand here would statically link libcrypto/libssl
+    // (~7 MB) into every binary using this crate, HTTPS or not.
+    getrandom::fill(&mut bytes).expect("OS CSPRNG must be available");
 
     let mut sid = String::with_capacity(SID_BYTES * 2);
     for byte in bytes {
