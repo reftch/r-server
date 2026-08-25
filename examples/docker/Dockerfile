@@ -1,4 +1,4 @@
-ARG ARTIFACT=templating-askama
+ARG ARTIFACT=session
 
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries

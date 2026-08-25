@@ -11,6 +11,7 @@ A modular, high-performance HTTP/1.1 server implementation in Rust featuring an 
 - **Static File Serving**: Built-in support for serving assets from a designated directory with automatic MIME type detection.
 - **Multipart Support**: Built-in parsing of `multipart/form-data` requests for handling file uploads and form fields.
 - **Server-Side Sessions**: Optional browser sessions backed by a thread-safe store shared across workers. Each request receives a cloneable `Session` handle; cookies (`HttpOnly`, `SameSite=Lax`) are managed automatically.
+- **Graceful Shutdown**: `SIGINT`/`SIGTERM` drain in-flight responses before closing (configurable deadline), release the listening port immediately, and cancel repeating background tasks.
 - **Modular Architecture**: Separated into specialized modules for requests, responses, routing, and server logic.
 - **Client**: A HTTP client capable of making GET, POST, PUT, PATCH, and DELETE requests. It supports both HTTP and HTTPS via SSL/TLS.
 
@@ -154,6 +155,33 @@ The startup log reports how many workers are running:
 
 ```sh
 [2026-08-21 06:54:36.524] [INFO] [r_server::core::http] - HTTP server started on http://127.0.0.1:8080 with 4 worker(s) in 18µs
+```
+
+### Graceful Shutdown
+
+`run()` handles `SIGINT` and `SIGTERM` automatically: the listening socket is
+closed immediately (the port is released and new connections are refused),
+idle keep-alive connections are closed, connections with an in-flight response
+are flushed before closing, and repeating background tasks started with
+`task::repeat_every` are cancelled and awaited. When `run()` returns, default
+signal dispositions are restored.
+
+Because handlers execute synchronously on the event loop, shutdown waits for
+the handler currently in flight; its response is still delivered in full.
+Connections that never finish — such as SSE streams — are force-closed when
+the drain deadline elapses. The deadline defaults to 30 seconds and can be
+changed per server:
+
+```rust
+use r_server::core::http::Server;
+use std::time::Duration;
+
+fn main() -> std::io::Result<()> {
+    Server::new()?
+        .shutdown_timeout(Duration::from_secs(10))
+        .run()?;
+    Ok(())
+}
 ```
 
 ### Client
@@ -431,10 +459,11 @@ By default server try to find local directory `assets` and find there index.html
 | `bind(host: &str, port: u16)`                       | Re-binds the underlying TCP listener to a new host/port and returns a mutable reference to the server, overriding the default address chosen by `new()`. Useful for changing the listening address after construction.                                         |
 | `assets_path(path: &str)`                           | Sets the directory for serving static files.                                                                                                                                                                                                                   |
 | `workers(n: usize)`                                 | Sets the number of worker threads. Each worker runs an independent event loop; the OS distributes connections across them (`SO_REUSEPORT` on Linux, a shared listening socket elsewhere). Values below 1 are clamped to 1. Defaults to 1. Returns `&mut Self`. |
+| `shutdown_timeout(timeout: Duration)`               | Sets the maximum time to wait for in-flight responses to flush during a graceful shutdown (`SIGINT`/`SIGTERM`). Idle keep-alive connections close immediately; anything still busy when the timeout elapses is force-closed. Defaults to 30 seconds. Returns `&mut Self`. |
 | `route(method, path, handler)`                      | Registers a new route with a specific HTTP method and path.                                                                                                                                                                                                    |
 | `use_middleware(fn(&Request, &mut Response, Next))` | Registers a global middleware that runs for every request (including static file serving), before the route handler. Returns `&mut Self`.                                                                                                                                                                                      |
 | `sessions_ttl(ttl_secs: i64)`                       | Enables server-side browser sessions with the given idle timeout; a negative value (e.g. `-1`) means sessions never expire. Every parsed request receives a session handle at `request.session()`; sessions are resolved from the `Cookie` header or minted fresh, and a new session is announced to the browser via a `Set-Cookie` header on the response. Disabled by default. Returns `&mut Self`. |
-| `run() -> IoResult<()>`                             | Starts the asynchronous event loop.                                                                                                                                                                                                                                                                                            |
+| `run() -> IoResult<()>`                             | Starts the event loop and blocks the calling thread. Installs `SIGINT`/`SIGTERM` handlers for graceful shutdown: stops accepting, flushes in-flight responses, closes idle connections, cancels repeating tasks, then restores default dispositions before returning. |
 
 ### `Response` (Builder Pattern)
 

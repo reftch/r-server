@@ -3,17 +3,20 @@ use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::core::STATIC_DIRECTORY;
 use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::core::metadata::Metadata;
+use crate::core::shutdown::Shutdown;
+use crate::core::{POLL_TIMEOUT, STATIC_DIRECTORY};
 use crate::request::Request;
+use crate::request::session::{
+    SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie,
+};
 use crate::response::{ContentType, Response, Status};
 use crate::router::Next;
 use crate::router::Router;
-use crate::request::session::{SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie};
+use crate::task;
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
 use std::io::{self, Read, Write};
@@ -73,6 +76,7 @@ pub struct Server {
     sessions: Option<Arc<SessionStore>>,
     addr: String,
     workers: usize,
+    shutdown_timeout: Duration,
 }
 
 impl Server {
@@ -108,6 +112,16 @@ impl Server {
         self
     }
 
+    /// Sets the maximum duration to wait for in-flight responses to flush
+    /// when a graceful shutdown is triggered (SIGINT, SIGTERM). Idle
+    /// keep-alive connections are closed immediately; connections with a
+    /// pending response are flushed and closed; anything still busy when the
+    /// timeout elapses is force-closed. Defaults to 30 seconds.
+    pub fn shutdown_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.shutdown_timeout = timeout;
+        self
+    }
+
     /// Enables server-side browser sessions with the given idle timeout.
     ///
     /// Every parsed request receives a session handle at `request.session()`;
@@ -140,6 +154,7 @@ impl Server {
             sessions: None,
             addr: addr.to_string(),
             workers: 1,
+            shutdown_timeout: Duration::from_secs(30),
         })
     }
 
@@ -270,6 +285,13 @@ impl Server {
     /// Run polling
     pub fn run(&mut self) -> io::Result<()> {
         let workers = self.workers.max(1);
+        let shutdown_timeout = self.shutdown_timeout;
+
+        // Install SIGINT/SIGTERM handling BEFORE binding so that once the
+        // listening socket accepts connections, shutdown handlers are
+        // guaranteed to be armed.
+        let shutdown = Arc::new(Shutdown::install()?);
+
         let mut listeners = Self::bind_listeners(&self.addr, workers).map_err(|e| {
             io::Error::new(
                 e.kind(),
@@ -284,7 +306,6 @@ impl Server {
             sessions: self.sessions.clone(),
         });
 
-        let shutdown = Arc::new(AtomicBool::new(false));
         let main_listener = listeners.swap_remove(0);
 
         let mut handles = Vec::with_capacity(listeners.len());
@@ -294,7 +315,7 @@ impl Server {
 
             let handle = thread::Builder::new()
                 .name(format!("r-server-worker-{}", i + 1))
-                .spawn(move || Self::event_loop(&listener, &ctx, &shutdown))
+                .spawn(move || Self::event_loop(listener, &ctx, &shutdown, shutdown_timeout))
                 .map_err(|e| {
                     io::Error::new(
                         io::ErrorKind::OutOfMemory,
@@ -312,13 +333,18 @@ impl Server {
         );
 
         // Run the primary worker on the calling thread.
-        let result = Self::event_loop(&main_listener, &ctx, &shutdown);
+        let result = Self::event_loop(main_listener, &ctx, &shutdown, shutdown_timeout);
 
         // Signal auxiliary workers to stop and wait for them.
-        shutdown.store(true, Ordering::Relaxed);
+        shutdown.trigger();
         for handle in handles {
             let _ = handle.join();
         }
+
+        // Stop repeating background tasks and restore default signal
+        // dispositions (via Drop).
+        task::cancel_all_and_join();
+        drop(shutdown);
 
         result
     }
@@ -501,37 +527,93 @@ impl Server {
 
     /// Single-worker polling loop. Each worker owns its listener and its
     /// connections exclusively; no synchronization is needed on the hot path.
+    ///
+    /// When a graceful shutdown is triggered the worker stops accepting,
+    /// closes idle keep-alive connections immediately and keeps servicing
+    /// only connections with a pending response until they are flushed or
+    /// `drain_timeout` elapses.
     fn event_loop(
-        listener: &TcpListener,
+        listener: TcpListener,
         ctx: &WorkerCtx,
-        shutdown: &AtomicBool,
+        shutdown: &Shutdown,
+        drain_timeout: Duration,
     ) -> io::Result<()> {
         listener.set_nonblocking(true)?;
 
-        let mut poll_fds: Vec<PollFd> = vec![PollFd {
-            fd: listener.as_raw_fd(),
-            events: POLLIN,
-            revents: 0,
-        }];
+        // Poll set layout: [wake-pipe, listener (while accepting), clients...]
+        const WAKE_INDEX: usize = 0;
+        const LISTENER_INDEX: usize = 1;
 
+        let mut poll_fds: Vec<PollFd> = vec![
+            PollFd {
+                fd: shutdown.wake_fd(),
+                events: POLLIN,
+                revents: 0,
+            },
+            PollFd {
+                fd: listener.as_raw_fd(),
+                events: POLLIN,
+                revents: 0,
+            },
+        ];
+
+        // Taken (closed) as soon as draining starts.
+        let mut listener = Some(listener);
         let mut connections: HashMap<i32, Connection<TcpStream>> = HashMap::new();
         let mut indices_to_remove = Vec::new();
+        let mut drain_deadline: Option<Instant> = None;
 
         loop {
-            if shutdown.load(Ordering::Relaxed) {
-                debug!("Worker shutting down");
-                return Ok(());
+            let draining = drain_deadline.is_some();
+
+            if !draining && shutdown.is_triggered() {
+                info!(
+                    "Graceful shutdown started; closing listener and draining {} connection(s)",
+                    connections.len()
+                );
+                drain_deadline = Some(Instant::now() + drain_timeout);
+
+                // Close the listening socket: new connections are refused
+                // and the port is released while existing ones finish.
+                drop(listener.take());
+                poll_fds.remove(LISTENER_INDEX);
+
+                // Idle keep-alive connections have nothing in flight; close
+                // them right away and keep only responses waiting to flush.
+                connections.retain(|_, conn| !conn.write_buf.is_empty());
+                let wake_fd = shutdown.wake_fd();
+                poll_fds.retain(|pfd| pfd.fd == wake_fd || connections.contains_key(&pfd.fd));
+
+                debug!("Draining {} connection(s)", connections.len());
+                continue;
+            }
+
+            if let Some(deadline) = drain_deadline {
+                if connections.is_empty() {
+                    debug!("All connections drained");
+                    return Ok(());
+                }
+
+                if Instant::now() >= deadline {
+                    debug!(
+                        "Drain timeout exceeded; force-closing {} connection(s)",
+                        connections.len()
+                    );
+                    // Dropping the map closes every remaining socket.
+                    return Ok(());
+                }
             }
 
             for pfd in poll_fds.iter_mut() {
                 pfd.revents = 0;
             }
 
+            let timeout = Shutdown::poll_timeout(drain_deadline, Duration::from_secs(POLL_TIMEOUT));
             let nfds = unsafe {
                 libc::poll(
                     poll_fds.as_mut_ptr() as *mut libc::pollfd,
                     poll_fds.len() as libc::nfds_t,
-                    1_000, // Wake up periodically to check the shutdown flag
+                    timeout,
                 )
             };
 
@@ -551,10 +633,17 @@ impl Server {
                 continue;
             }
 
-            // Handle listener (index 0)
-            if poll_fds[0].revents & POLLIN != 0 {
+            // Wake pipe: consume pending bytes so readiness clears.
+            if poll_fds[WAKE_INDEX].revents & POLLIN != 0 {
+                shutdown.drain_wake_pipe();
+            }
+
+            // Handle listener (index 1) while still accepting.
+            if let Some(listener_ref) = listener.as_ref()
+                && poll_fds[LISTENER_INDEX].revents & POLLIN != 0
+            {
                 loop {
-                    match listener.accept() {
+                    match listener_ref.accept() {
                         Ok((stream, addr)) => {
                             let fd = stream.as_raw_fd();
                             let conn = Connection::new(stream)?;
@@ -579,8 +668,12 @@ impl Server {
 
             indices_to_remove.clear();
 
-            // Handle client connections
-            for (i, item) in poll_fds.iter_mut().enumerate().skip(1) {
+            let listener_active = listener.is_some();
+            for (i, item) in poll_fds.iter_mut().enumerate() {
+                if i == WAKE_INDEX || (listener_active && i == LISTENER_INDEX) {
+                    continue;
+                }
+
                 if item.revents == 0 {
                     continue;
                 }
@@ -599,7 +692,14 @@ impl Server {
                     if let Some(conn) = connections.get_mut(&fd) {
                         match Self::handle_write(conn) {
                             Ok(WriteState::Done) => {
-                                item.events = POLLIN;
+                                if draining {
+                                    // Response fully flushed during shutdown;
+                                    // this connection has nothing left to do.
+                                    trace!("FD {}: flushed during shutdown; closing", fd);
+                                    indices_to_remove.push(i);
+                                } else {
+                                    item.events = POLLIN;
+                                }
                             }
                             Ok(WriteState::Continue) => {
                                 // Trace is better here: it's high-frequency progress data
@@ -615,23 +715,24 @@ impl Server {
                             }
                         }
                     }
-                } else if revents & POLLIN != 0
-                    && let Some(conn) = connections.get_mut(&fd)
-                {
-                    match Self::handle_read(ctx, conn) {
-                        Ok(true) => {
-                            if !conn.write_buf.is_empty() {
-                                item.events = POLLOUT;
+                } else if revents & POLLIN != 0 && !draining {
+                    // New inbound requests are ignored during a drain.
+                    if let Some(conn) = connections.get_mut(&fd) {
+                        match Self::handle_read(ctx, conn) {
+                            Ok(true) => {
+                                if !conn.write_buf.is_empty() {
+                                    item.events = POLLOUT;
+                                }
                             }
-                        }
-                        Ok(false) => {
-                            // Client closed connection gracefully (EOF)
-                            debug!("FD {}: Connection closed by client", fd);
-                            indices_to_remove.push(i);
-                        }
-                        Err(err) => {
-                            error!("FD {}: Read error: {}", fd, err);
-                            indices_to_remove.push(i);
+                            Ok(false) => {
+                                // Client closed connection gracefully (EOF)
+                                debug!("FD {}: Connection closed by client", fd);
+                                indices_to_remove.push(i);
+                            }
+                            Err(err) => {
+                                error!("FD {}: Read error: {}", fd, err);
+                                indices_to_remove.push(i);
+                            }
                         }
                     }
                 }
