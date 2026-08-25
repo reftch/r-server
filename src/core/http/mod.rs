@@ -13,7 +13,7 @@ use crate::request::Request;
 use crate::response::{ContentType, Response, Status};
 use crate::router::Next;
 use crate::router::Router;
-use crate::session::{SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie};
+use crate::request::session::{SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie};
 use crate::utils::get_file_info;
 use crate::{debug, error, info, trace};
 use std::io::{self, Read, Write};
@@ -115,7 +115,7 @@ impl Server {
     /// new session is announced to the browser via a `Set-Cookie` header on
     /// the response. Sessions idle for more than `ttl_secs` are dropped from
     /// the store; a negative value such as `-1` means sessions never expire.
-    /// Disabled by default. See [`crate::session`].
+    /// Disabled by default. See [`crate::request::session`].
     pub fn sessions_ttl(&mut self, ttl_secs: i64) -> &mut Self {
         self.sessions = Some(Arc::new(if ttl_secs < 0 {
             SessionStore::infinite()

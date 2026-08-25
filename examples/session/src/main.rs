@@ -71,7 +71,7 @@ fn logout(req: &Request, res: &mut Response) {
 
 fn main() -> std::io::Result<()> {
     Server::new()?
-        .sessions_ttl(3600) // sessions survive 1h of inactivity
+        .sessions_ttl(-1) // sessions never expire
         .route(Method::GET, "/", index)
         .route(Method::GET, "/whoami", whoami)
         .route(Method::POST, "/login", login)

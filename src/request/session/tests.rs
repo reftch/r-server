@@ -9,6 +9,12 @@ fn is_hex_sid(sid: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+fn backdate(session: &Session, secs_ago: u64) {
+    lock(&session.0).status = SessionStatus::Active {
+        last_activity: now_secs().saturating_sub(secs_ago),
+    };
+}
+
 #[test]
 fn creates_new_session_without_cookie() {
     let store = SessionStore::new(3600);
@@ -21,10 +27,14 @@ fn creates_new_session_without_cookie() {
     assert_eq!(store.len(), 1);
 
     let inner = lock(&session.0);
-    // The second boundary may tick during creation; accept both seconds.
-    assert!(inner.created_at >= before.saturating_sub(1));
-    assert!(inner.created_at <= now_secs());
-    assert_eq!(inner.last_activity, inner.created_at);
+    match inner.status {
+        SessionStatus::Active { last_activity } => {
+            // The second boundary may tick during creation; accept both seconds.
+            assert!(last_activity >= before.saturating_sub(1));
+            assert!(last_activity <= now_secs());
+        }
+        SessionStatus::Destroyed => panic!("fresh session must be active"),
+    }
     assert!(inner.data.is_empty());
 }
 
@@ -95,12 +105,30 @@ fn destroy_marks_session_and_store_evicts() {
 }
 
 #[test]
+fn destroyed_session_is_never_reused() {
+    let store = SessionStore::new(3600);
+    let (session, _) = store.get_or_create(None);
+    let sid = session.id();
+
+    session.destroy();
+    // Refreshing activity must not resurrect a destroyed session.
+    session.touch(now_secs());
+
+    let (fresh, is_new) = store.get_or_create(Some(&sid));
+
+    assert!(is_new);
+    assert_ne!(fresh.id(), sid);
+    // The stale entry was dropped eagerly.
+    assert_eq!(store.len(), 1);
+}
+
+#[test]
 fn sweep_drops_idle_sessions() {
     let store = SessionStore::new(10);
     let (stale, _) = store.get_or_create(None);
 
     // Backdate the session past the TTL and force the sweep to run.
-    lock(&stale.0).last_activity = now_secs().saturating_sub(60);
+    backdate(&stale, 60);
     store.next_sweep.store(0, Ordering::Relaxed);
 
     let (_fresh, is_new) = store.get_or_create(None);
@@ -115,7 +143,7 @@ fn infinite_sessions_never_expire_on_lookup() {
     let (session, _) = store.get_or_create(None);
 
     // Backdate far beyond any finite TTL; an infinite store must still reuse.
-    lock(&session.0).last_activity = now_secs().saturating_sub(SWEEP_INTERVAL_SECS * 1_000);
+    backdate(&session, SWEEP_INTERVAL_SECS * 1_000);
 
     let (reused, is_new) = store.get_or_create(Some(&session.id()));
 
@@ -127,7 +155,7 @@ fn infinite_sessions_never_expire_on_lookup() {
 fn infinite_sessions_survive_sweep() {
     let store = SessionStore::infinite();
     let (session, _) = store.get_or_create(None);
-    lock(&session.0).last_activity = now_secs().saturating_sub(3_600);
+    backdate(&session, 3_600);
 
     store.next_sweep.store(0, Ordering::Relaxed);
     let (_, is_new) = store.get_or_create(Some(&session.id()));

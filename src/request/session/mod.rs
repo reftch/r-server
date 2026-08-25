@@ -29,17 +29,28 @@ const SWEEP_INTERVAL_SECS: u64 = 30;
 /// Raw random bytes per session id (rendered as 2x hex characters).
 const SID_BYTES: usize = 16;
 
+/// Lifecycle state of a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionStatus {
+    /// Live session; carries the Unix timestamp (seconds) of the last
+    /// request seen for it.
+    Active {
+        /// Unix timestamp (seconds) of the last request.
+        last_activity: u64,
+    },
+    /// Marked ended via [`Session::destroy`]; evicted from the store after
+    /// the current request.
+    Destroyed,
+}
+
 /// Session state owned by the store and shared through [`Session`].
 pub struct SessionInner {
     /// Opaque random identifier stored in the browser cookie.
     pub session_id: String,
-    /// Unix timestamp (seconds) of session creation.
-    pub created_at: u64,
-    /// Unix timestamp (seconds) of the last request seen for this session.
-    pub last_activity: u64,
+    /// Current lifecycle state.
+    pub status: SessionStatus,
     /// Arbitrary application data.
     pub data: HashMap<String, String>,
-    destroyed: bool,
 }
 
 /// Cloneable handle to one browser's session.
@@ -78,20 +89,18 @@ impl Session {
     /// Marks the session as ended; the store evicts it after the current
     /// request and the browser cookie is expired.
     pub fn destroy(&self) {
-        lock(&self.0).destroyed = true;
+        lock(&self.0).status = SessionStatus::Destroyed;
     }
 
     /// Whether [`Session::destroy`] was called during this request.
     pub fn is_destroyed(&self) -> bool {
-        lock(&self.0).destroyed
+        lock(&self.0).status == SessionStatus::Destroyed
     }
 
     pub(crate) fn touch(&self, now: u64) {
-        lock(&self.0).last_activity = now;
-    }
-
-    pub(crate) fn idle_secs(&self, now: u64) -> u64 {
-        now.saturating_sub(lock(&self.0).last_activity)
+        if let SessionStatus::Active { last_activity } = &mut lock(&self.0).status {
+            *last_activity = now;
+        }
     }
 }
 
@@ -131,9 +140,15 @@ impl SessionStore {
     }
 
     fn is_expired(&self, session: &Session, now: u64) -> bool {
-        match self.ttl_secs {
-            Some(ttl) => session.idle_secs(now) >= ttl,
-            None => false,
+        let inner = lock(&session.0);
+        match inner.status {
+            // Destroyed sessions are always evicted, even before the
+            // connection layer removes them explicitly.
+            SessionStatus::Destroyed => true,
+            SessionStatus::Active { last_activity } => match self.ttl_secs {
+                Some(ttl) => now.saturating_sub(last_activity) >= ttl,
+                None => false,
+            },
         }
     }
 
@@ -173,10 +188,8 @@ impl SessionStore {
 
         let inner = SessionInner {
             session_id: generate_sid(),
-            created_at: now,
-            last_activity: now,
+            status: SessionStatus::Active { last_activity: now },
             data: HashMap::new(),
-            destroyed: false,
         };
 
         let session = Session::new(inner);

@@ -1,4 +1,5 @@
 mod multipart;
+pub mod session;
 
 use std::io::Cursor;
 
@@ -6,8 +7,10 @@ use memchr::memchr;
 
 pub use multipart::FormField;
 
-use crate::request::multipart::{extract_boundary_from_content_type, parse_multipart};
-use crate::session::Session;
+use crate::request::{
+    multipart::{extract_boundary_from_content_type, parse_multipart},
+    session::Session,
+};
 
 /// Represents an HTTP request without lifetime annotations.
 pub struct Request {
@@ -27,7 +30,7 @@ pub struct Request {
     /// Raw body of request
     pub body: Vec<u8>,
     /// Browser session resolved by the server when sessions are enabled
-    /// (see [`crate::session`]); `None` otherwise or before attachment.
+    /// (see [`Session`]); `None` otherwise or before attachment.
     pub session: Option<Session>,
 }
 
@@ -247,7 +250,7 @@ impl Request {
     ///
     /// Always `None` unless sessions were enabled on the server with
     /// `Server::sessions_ttl`. The session is shared state: mutation happens
-    /// through `&self` (see [`crate::session::Session`]).
+    /// through `&self` (see [`Session`]).
     #[inline]
     pub fn session(&self) -> Option<&Session> {
         self.session.as_ref()
