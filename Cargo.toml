@@ -38,6 +38,7 @@ lto = "thin"
 resolver = "2"
 members = [
     ".",
+    "examples/auth/session",
     "examples/client",
     "examples/forms/form",
     "examples/forms/multipart",
@@ -46,7 +47,6 @@ members = [
     "examples/middleware",
     "examples/rest",
     "examples/sse",
-    "examples/session",
     "examples/static",
     "examples/templating/askama",
     "examples/templating/handlebars",
