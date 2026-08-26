@@ -37,6 +37,8 @@ lto = "thin"
 resolver = "2"
 members = [
     ".",
+    "examples/auth/github",
+    "examples/auth/google",
     "examples/auth/session",
     "examples/client",
     "examples/forms/form",

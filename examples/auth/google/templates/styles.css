@@ -1,0 +1,21 @@
+body {
+    background-color: white;
+    color: black;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #222;
+        color: #eee;
+    }
+}
+
+.profile {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.avatar {
+    border-radius: 50%;
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>R-Server Home page</title>
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        {% match user %}
+        {% when Some with (u) %}
+        <div class="profile">
+            {% if let Some(picture) = u.picture %}
+            <img class="avatar" src="{{ picture }}" alt="{{ u.name }}" width="72" height="72" />
+            {% endif %}
+            <h1>Hi, {{ u.name }}!</h1>
+        </div>
+        <a href="/logout">Log out</a>
+        {% when None %}
+        <h1>Welcome !</h1>
+        <a
+            href="https://accounts.google.com/o/oauth2/v2/auth?client_id={{ client_id }}&redirect_uri={{ redirect_uri }}&response_type=code&scope=openid%20email%20profile"
+            >Log in with Google</a
+        >
+        {% endmatch %}
+    </body>
+</html>

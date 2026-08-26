@@ -44,11 +44,18 @@ impl Client {
         }
     }
 
-    /// Executes an HTTP request with the given method, path, and optional body.
+    /// Executes an HTTP request with the given method, path, optional body,
+    /// and extra headers.
     ///
     /// This method handles stream creation, request construction, and response reading,
     /// including support for chunked transfer encoding.
-    fn execute(&self, method: &str, path: &str, body: Option<String>) -> Result<String, String> {
+    fn execute(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+        headers: &[(&str, &str)],
+    ) -> Result<String, String> {
         // Use the custom ReadWrite trait for the Box type
         let mut stream: Box<dyn ReadWrite> = if self.is_secure {
             let connector = openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
@@ -76,8 +83,13 @@ impl Client {
         // Now write! will work because Write is in scope
         write!(stream, "{} {} HTTP/1.1\r\n", method, path).map_err(|e| e.to_string())?;
         write!(stream, "Host: {}\r\n", self.host).map_err(|e| e.to_string())?;
+        write!(stream, "User-Agent: r-server\r\n").map_err(|e| e.to_string())?;
         write!(stream, "Accept: application/json\r\n").map_err(|e| e.to_string())?;
         write!(stream, "Connection: close\r\n").map_err(|e| e.to_string())?;
+
+        for (name, value) in headers {
+            write!(stream, "{}: {}\r\n", name, value).map_err(|e| e.to_string())?;
+        }
 
         if let Some(ref b) = body {
             write!(stream, "Content-Length: {}\r\n", b.len()).map_err(|e| e.to_string())?;
@@ -120,27 +132,42 @@ impl Client {
 
     /// Sends a GET request to the specified path.
     pub fn get(&self, path: &str) -> Result<String, String> {
-        self.execute("GET", path, None)
+        self.get_with(path, &[])
+    }
+
+    /// Sends a GET request to the specified path with extra headers.
+    pub fn get_with(&self, path: &str, headers: &[(&str, &str)]) -> Result<String, String> {
+        self.execute("GET", path, None, headers)
     }
 
     /// Sends a POST request to the specified path with the given body.
     pub fn post(&self, path: &str, body: String) -> Result<String, String> {
-        self.execute("POST", path, Some(body))
+        self.post_with(path, body, &[])
+    }
+
+    /// Sends a POST request to the specified path with the given body and extra headers.
+    pub fn post_with(
+        &self,
+        path: &str,
+        body: String,
+        headers: &[(&str, &str)],
+    ) -> Result<String, String> {
+        self.execute("POST", path, Some(body), headers)
     }
 
     /// Sends a PUT request to the specified path with the given body.
     pub fn put(&self, path: &str, body: String) -> Result<String, String> {
-        self.execute("PUT", path, Some(body))
+        self.execute("PUT", path, Some(body), &[])
     }
 
     /// Sends a PATCH request to the specified path with the given body.
     pub fn patch(&self, path: &str, body: String) -> Result<String, String> {
-        self.execute("PATCH", path, Some(body))
+        self.execute("PATCH", path, Some(body), &[])
     }
 
     /// Sends a DELETE request to the specified path.
     pub fn delete(&self, path: &str) -> Result<String, String> {
-        self.execute("DELETE", path, None)
+        self.execute("DELETE", path, None, &[])
     }
 }
 
