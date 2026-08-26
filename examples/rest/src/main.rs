@@ -19,7 +19,5 @@ fn main() -> std::io::Result<()> {
             }
         })
         .workers(2)
-        .run()?;
-
-    Ok(())
+        .run()
 }

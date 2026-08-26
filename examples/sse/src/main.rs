@@ -45,7 +45,5 @@ fn main() -> std::io::Result<()> {
                 },
             );
         })
-        .run()?;
-
-    Ok(())
+        .run()
 }

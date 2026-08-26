@@ -29,7 +29,5 @@ fn main() -> std::io::Result<()> {
             }
         })
         .bind("0.0.0.0", 8082)
-        .run()?;
-
-    Ok(())
+        .run()
 }

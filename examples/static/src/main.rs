@@ -23,6 +23,5 @@ fn main() -> std::io::Result<()> {
         })
         .assets_path("./examples/static/assets")
         .workers(2)
-        .run()?;
-    Ok(())
+        .run()
 }
