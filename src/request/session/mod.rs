@@ -266,18 +266,104 @@ fn now_secs() -> u64 {
 
 fn generate_sid() -> String {
     let mut bytes = [0u8; SID_BYTES];
-    // The OS CSPRNG (via the tiny `getrandom` crate) instead of OpenSSL:
-    // referencing openssl::rand here would statically link libcrypto/libssl
-    // (~7 MB) into every binary using this crate, HTTPS or not.
-    getrandom::fill(&mut bytes).expect("OS CSPRNG must be available");
+    fill_random(&mut bytes).expect("OS CSPRNG must be available");
 
     let mut sid = String::with_capacity(SID_BYTES * 2);
     for byte in bytes {
-        // Writing two hex chars into a String never fails.
         write!(sid, "{byte:02x}").unwrap();
     }
 
     sid
+}
+
+// fn generate_sid() -> String {
+//     let mut bytes = [0u8; SID_BYTES];
+//     // The OS CSPRNG (via the tiny `getrandom` crate) instead of OpenSSL:
+//     // referencing openssl::rand here would statically link libcrypto/libssl
+//     // (~7 MB) into every binary using this crate, HTTPS or not.
+//     getrandom::fill(&mut bytes).expect("OS CSPRNG must be available");
+
+//     let mut sid = String::with_capacity(SID_BYTES * 2);
+//     for byte in bytes {
+//         // Writing two hex chars into a String never fails.
+//         write!(sid, "{byte:02x}").unwrap();
+//     }
+
+//     sid
+// }
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
+    let mut filled = 0;
+
+    while filled < buf.len() {
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_getrandom,
+                buf[filled..].as_mut_ptr(),
+                buf.len() - filled,
+                0,
+            )
+        };
+
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+
+            return Err(err);
+        }
+
+        filled += ret as usize;
+    }
+
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
+    #[link(name = "Security", kind = "framework")]
+    unsafe extern "C" {
+        fn SecRandomCopyBytes(
+            rnd: *const std::ffi::c_void,
+            count: isize,
+            bytes: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+
+    let result = unsafe {
+        SecRandomCopyBytes(
+            std::ptr::null(),
+            buf.len() as isize,
+            buf.as_mut_ptr().cast(),
+        )
+    };
+
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::from_raw_os_error(result))
+    }
+}
+
+#[cfg(windows)]
+fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::from_raw_os_error(status as i32))
+    }
 }
 
 #[cfg(test)]
