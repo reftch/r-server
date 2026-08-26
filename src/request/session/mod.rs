@@ -276,22 +276,6 @@ fn generate_sid() -> String {
     sid
 }
 
-// fn generate_sid() -> String {
-//     let mut bytes = [0u8; SID_BYTES];
-//     // The OS CSPRNG (via the tiny `getrandom` crate) instead of OpenSSL:
-//     // referencing openssl::rand here would statically link libcrypto/libssl
-//     // (~7 MB) into every binary using this crate, HTTPS or not.
-//     getrandom::fill(&mut bytes).expect("OS CSPRNG must be available");
-
-//     let mut sid = String::with_capacity(SID_BYTES * 2);
-//     for byte in bytes {
-//         // Writing two hex chars into a String never fails.
-//         write!(sid, "{byte:02x}").unwrap();
-//     }
-
-//     sid
-// }
-
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
     let mut filled = 0;

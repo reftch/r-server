@@ -1,12 +1,12 @@
-ARG ARTIFACT=session
+ARG ARTIFACT=templating-askama
 
 # Stage 1: Build with musl for static linking
 # The musl target produces fully static binaries
 FROM rust:1.96.1-alpine AS builder
 
 ARG ARTIFACT
-ARG TARGETARCH=aarch64
-# ARG TARGETARCH=x86_64
+# ARG TARGETARCH=aarch64
+ARG TARGETARCH=x86_64
 
 # Install musl-dev for static compilation
 # Also install build essentials needed by some crates
