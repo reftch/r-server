@@ -23,6 +23,7 @@
       "firstName": "Demo",
       "lastName": "User",
       "emailVerified": true,
+      "requiredActions": [],
       "credentials": [
         {
           "type": "password",

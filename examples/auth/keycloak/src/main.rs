@@ -281,4 +281,3 @@ mod tests {
         assert!(!html.contains("Log out</a>"));
     }
 }
-

@@ -1,7 +1,13 @@
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0.0
-    command: ["start-dev", "--import-realm"]
+    image: quay.io/keycloak/keycloak
+    # Force a clean re-import of realm.json on every start. Keycloak's
+    # `--import-realm` only imports realms that do not already exist, so without
+    # wiping the embedded DB, edits to realm.json (e.g. password policies) would
+    # be silently ignored and a stale realm reused.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - rm -rf /opt/keycloak/data/h2 /opt/keycloak/data/transaction-logs && /opt/keycloak/bin/kc.sh start-dev --import-realm
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
@@ -10,5 +16,4 @@ services:
     volumes:
       - ./realm.json:/opt/keycloak/data/import/realm.json:ro
     ports:
-      # Exposed on 9090 to avoid clashing with the example app on 8080.
       - "9090:8080"
