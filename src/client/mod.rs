@@ -21,9 +21,9 @@ impl Client {
     pub fn new(host: impl Into<String>) -> Self {
         let host_str = host.into();
         let is_secure = host_str.starts_with("https://");
-        let port = if is_secure { 443 } else { 80 };
+        let default_port = if is_secure { 443 } else { 80 };
 
-        let cleaned_host = if is_secure {
+        let stripped = if is_secure {
             host_str
                 .strip_prefix("https://")
                 .unwrap_or(&host_str)
@@ -36,6 +36,16 @@ impl Client {
         } else {
             host_str
         };
+
+        // Only the authority (host[:port]) is used to open the connection; any
+        // path or query component in the input is ignored here and must be
+        // supplied per-request via the `path` argument.
+        let authority = match stripped.find('/') {
+            Some(i) => &stripped[..i],
+            None => &stripped[..],
+        };
+
+        let (cleaned_host, port) = split_authority(authority, default_port);
 
         Self {
             host: cleaned_host,
@@ -82,7 +92,17 @@ impl Client {
 
         // Now write! will work because Write is in scope
         write!(stream, "{} {} HTTP/1.1\r\n", method, path).map_err(|e| e.to_string())?;
-        write!(stream, "Host: {}\r\n", self.host).map_err(|e| e.to_string())?;
+
+        // Include the port in the Host header unless it is the scheme's default.
+        // Some servers (e.g. Keycloak) validate the Host against the issuer URL
+        // and reject requests where the port is omitted for non-default ports.
+        let host_header =
+            if (self.is_secure && self.port == 443) || (!self.is_secure && self.port == 80) {
+                self.host.clone()
+            } else {
+                format!("{}:{}", self.host, self.port)
+            };
+        write!(stream, "Host: {}\r\n", host_header).map_err(|e| e.to_string())?;
         write!(stream, "User-Agent: r-server\r\n").map_err(|e| e.to_string())?;
         write!(stream, "Accept: application/json\r\n").map_err(|e| e.to_string())?;
         write!(stream, "Connection: close\r\n").map_err(|e| e.to_string())?;
@@ -204,6 +224,36 @@ pub fn decode_chunked(body: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>
         pos += 2;
     }
     Ok(result)
+}
+
+/// Splits an authority string into a host and port.
+///
+/// Supports `host`, `host:port`, and IPv6 literals such as `[::1]` or
+/// `[::1]:9090`. When no port is present, `default_port` is returned.
+fn split_authority(authority: &str, default_port: u16) -> (String, u16) {
+    // IPv6 literal, e.g. "[::1]" or "[::1]:9090"
+    if let Some(rest) = authority.strip_prefix('[') {
+        if let Some(close) = rest.find(']') {
+            let host = format!("[{}]", &rest[..close]);
+            let after = &rest[close + 1..];
+            if let Some(port_str) = after.strip_prefix(':') {
+                if let Ok(port) = port_str.parse::<u16>() {
+                    return (host, port);
+                }
+            }
+            return (host, default_port);
+        }
+    }
+
+    // host:port (IPv4 or hostname)
+    if let Some(colon) = authority.rfind(':') {
+        let (host, port_part) = authority.split_at(colon);
+        if let Ok(port) = port_part[1..].parse::<u16>() {
+            return (host.to_string(), port);
+        }
+    }
+
+    (authority.to_string(), default_port)
 }
 
 #[cfg(test)]

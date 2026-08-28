@@ -37,6 +37,50 @@ fn new_accepts_string_input() {
 }
 
 #[test]
+fn new_parses_explicit_http_port() {
+    let client = Client::new("http://localhost:9090");
+
+    assert_eq!(client.host, "localhost");
+    assert!(!client.is_secure);
+    assert_eq!(client.port, 9090);
+}
+
+#[test]
+fn new_parses_explicit_https_port() {
+    let client = Client::new("https://example.com:8443");
+
+    assert_eq!(client.host, "example.com");
+    assert!(client.is_secure);
+    assert_eq!(client.port, 8443);
+}
+
+#[test]
+fn new_strips_path_component() {
+    let client = Client::new("http://localhost:9090/realms/rserver");
+
+    assert_eq!(client.host, "localhost");
+    assert_eq!(client.port, 9090);
+}
+
+#[test]
+fn new_parses_ipv6_with_port() {
+    let client = Client::new("http://[::1]:9090");
+
+    assert_eq!(client.host, "[::1]");
+    assert!(!client.is_secure);
+    assert_eq!(client.port, 9090);
+}
+
+#[test]
+fn new_parses_ipv6_without_port() {
+    let client = Client::new("https://[::1]");
+
+    assert_eq!(client.host, "[::1]");
+    assert!(client.is_secure);
+    assert_eq!(client.port, 443);
+}
+
+#[test]
 fn decode_chunked_decodes_single_chunk() {
     let body = b"5\r\nhello\r\n0\r\n\r\n";
 

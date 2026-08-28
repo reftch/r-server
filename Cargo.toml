@@ -39,6 +39,7 @@ members = [
     ".",
     "examples/auth/github",
     "examples/auth/google",
+    "examples/auth/keycloak",
     "examples/auth/session",
     "examples/client",
     "examples/forms/form",
