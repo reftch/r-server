@@ -232,17 +232,18 @@ pub fn decode_chunked(body: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>
 /// `[::1]:9090`. When no port is present, `default_port` is returned.
 fn split_authority(authority: &str, default_port: u16) -> (String, u16) {
     // IPv6 literal, e.g. "[::1]" or "[::1]:9090"
-    if let Some(rest) = authority.strip_prefix('[') {
-        if let Some(close) = rest.find(']') {
-            let host = format!("[{}]", &rest[..close]);
-            let after = &rest[close + 1..];
-            if let Some(port_str) = after.strip_prefix(':') {
-                if let Ok(port) = port_str.parse::<u16>() {
-                    return (host, port);
-                }
-            }
-            return (host, default_port);
+    if let Some(rest) = authority.strip_prefix('[')
+        && let Some(close) = rest.find(']')
+    {
+        let host = format!("[{}]", &rest[..close]);
+        let after = &rest[close + 1..];
+        if let Some(port_str) = after.strip_prefix(':')
+            && let Ok(port) = port_str.parse::<u16>()
+        {
+            return (host, port);
         }
+
+        return (host, default_port);
     }
 
     // host:port (IPv4 or hostname)
