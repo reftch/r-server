@@ -326,7 +326,8 @@ impl Server {
         }
 
         info!(
-            "HTTP server started on http://{} with {} worker(s) in {}µs",
+            "R-server v{} started on http://{} with {} worker(s) in {}µs",
+            env!("CARGO_PKG_VERSION"),
             local_addr,
             workers,
             self.init_start.elapsed().as_micros()

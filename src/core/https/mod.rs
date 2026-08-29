@@ -411,7 +411,7 @@ impl Server {
             let shutdown = Arc::clone(&shutdown);
 
             let handle = thread::Builder::new()
-                .name(format!("r-server-https-worker-{}", i + 1))
+                .name(format!("R-server-https-worker-{}", i + 1))
                 .spawn(move || Self::event_loop(listener, &ctx, &shutdown, shutdown_timeout))
                 .map_err(|e| {
                     io::Error::new(
@@ -423,7 +423,8 @@ impl Server {
         }
 
         info!(
-            "HTTPS server started on https://{} with {} worker(s) in {}µs",
+            "r-server v{} started on https://{} with {} worker(s) in {}µs",
+            env!("CARGO_PKG_VERSION"),
             local_addr,
             workers,
             self.init_start.elapsed().as_micros()
