@@ -1,10 +1,6 @@
 services:
   keycloak:
     image: quay.io/keycloak/keycloak
-    # Force a clean re-import of realm.json on every start. Keycloak's
-    # `--import-realm` only imports realms that do not already exist, so without
-    # wiping the embedded DB, edits to realm.json (e.g. password policies) would
-    # be silently ignored and a stale realm reused.
     entrypoint: ["/bin/bash", "-c"]
     command:
       - rm -rf /opt/keycloak/data/h2 /opt/keycloak/data/transaction-logs && /opt/keycloak/bin/kc.sh start-dev --import-realm
