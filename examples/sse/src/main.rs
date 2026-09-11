@@ -34,9 +34,9 @@ fn main() -> std::io::Result<()> {
         .route(Method::GET, "/", home_handler)
         .route(Method::GET, "/stream", |req, res| {
             task::repeat_every(
+                Duration::from_millis(500),
                 req.path.to_string(),
                 &*res.metadata,
-                Duration::from_millis(500),
                 |res| {
                     let _ = res.stream(&format!(
                         "{}\n\n",

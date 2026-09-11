@@ -27,7 +27,7 @@ static TASKS: OnceLock<Mutex<HashMap<String, BackgroundTask>>> = OnceLock::new()
 /// Granularity of the cancellation check while a repeating task sleeps.
 const CANCEL_TICK: Duration = Duration::from_millis(50);
 
-pub fn repeat_every<F>(key: impl Into<String>, metadata: &dyn Metadata, delay: Duration, mut f: F)
+pub fn repeat_every<F>(delay: Duration, key: impl Into<String>, metadata: &dyn Metadata, mut f: F)
 where
     F: FnMut(&mut Response) + Send + 'static,
 {
