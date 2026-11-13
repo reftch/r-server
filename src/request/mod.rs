@@ -42,6 +42,12 @@ pub struct Request {
 /// Type alias for key-value string pairs used in headers and parameters.
 pub type KeyValuePair = (Box<str>, Box<str>);
 
+pub(crate) enum ParseResult {
+    Incomplete,
+    Invalid,
+    Complete(Request, usize),
+}
+
 impl Request {
     /// Finds the end of the request headers by looking for the double CRLF.
     #[inline(always)]
@@ -70,15 +76,6 @@ impl Request {
             .map(|(_, v)| &**v)
     }
 
-    /// Parses the Content-Length header into a byte count, if present and valid.
-    #[inline(always)]
-    fn content_length(headers: &[KeyValuePair]) -> Option<usize> {
-        Self::find_header_value(headers, "content-length")?
-            .trim()
-            .parse::<usize>()
-            .ok()
-    }
-
     /// Parses an HTTP request from a byte buffer.
     ///
     /// Returns `None` while the request is still incomplete (e.g. the body
@@ -86,18 +83,35 @@ impl Request {
     /// partial reads are kept until the whole request is available.
     #[inline(always)]
     pub fn parse(buf: &[u8]) -> Option<Self> {
-        let header_end = Self::find_header_end(buf)?;
+        match Self::parse_prefix(buf) {
+            ParseResult::Complete(request, _) => Some(request),
+            ParseResult::Incomplete | ParseResult::Invalid => None,
+        }
+    }
+
+    pub(crate) fn parse_prefix(buf: &[u8]) -> ParseResult {
+        let Some(header_end) = Self::find_header_end(buf) else {
+            return if buf.len() > MAX_HEADER_SIZE {
+                ParseResult::Invalid
+            } else {
+                ParseResult::Incomplete
+            };
+        };
         if header_end > MAX_HEADER_SIZE {
-            return None;
+            return ParseResult::Invalid;
         }
 
         // Validate untrusted network bytes before treating them as text.
-        let text = std::str::from_utf8(&buf[..header_end]).ok()?;
+        let Ok(text) = std::str::from_utf8(&buf[..header_end]) else {
+            return ParseResult::Invalid;
+        };
 
         let mut lines = text.split("\r\n");
 
         // Request line
-        let request_line = lines.next()?;
+        let Some(request_line) = lines.next() else {
+            return ParseResult::Invalid;
+        };
 
         let bytes = request_line.as_bytes();
 
@@ -116,39 +130,57 @@ impl Request {
             }
         }
 
-        let first_space = first_space?;
-        let second_space = second_space?;
+        let (Some(first_space), Some(second_space)) = (first_space, second_space) else {
+            return ParseResult::Invalid;
+        };
 
         let method = &request_line[..first_space];
         let version = &request_line[second_space + 1..];
         let full_path = &request_line[first_space + 1..second_space];
         if method.is_empty() || full_path.is_empty() || version != "HTTP/1.1" {
-            return None;
+            return ParseResult::Invalid;
         }
 
         let (path, query_params) = Self::parse_path_and_query(full_path);
-        let headers = Self::parse_headers(&mut lines);
+        let Some(headers) = Self::parse_headers(&mut lines) else {
+            return ParseResult::Invalid;
+        };
+
+        // Transfer-Encoding is not implemented. Reject it (and any request
+        // combining it with Content-Length) rather than guessing framing.
+        if Self::find_header_value(&headers, "transfer-encoding").is_some() {
+            return ParseResult::Invalid;
+        }
+
+        let mut content_length = None;
+        for (name, value) in &headers {
+            if name.eq_ignore_ascii_case("content-length") {
+                if content_length.is_some() {
+                    return ParseResult::Invalid;
+                }
+                let Ok(len) = value.trim().parse::<usize>() else {
+                    return ParseResult::Invalid;
+                };
+                content_length = Some(len);
+            }
+        }
 
         // Wait until the body announced via Content-Length has fully arrived
         // before dispatching, otherwise large uploads (which span multiple
         // socket reads) would be handed to handlers with truncated bodies.
-        let content_length = Self::content_length(&headers);
-        if let Some(len) = content_length {
-            if len > MAX_BODY_SIZE {
-                return None;
-            }
-            let total_len = header_end.checked_add(len)?;
-            if buf.len() < total_len {
-                return None;
-            }
-        }
-
-        let body_len = content_length.unwrap_or(buf.len() - header_end);
+        let body_len = content_length.unwrap_or(0);
         if body_len > MAX_BODY_SIZE {
-            return None;
+            return ParseResult::Invalid;
         }
 
-        Some(Self {
+        let Some(total_len) = header_end.checked_add(body_len) else {
+            return ParseResult::Invalid;
+        };
+        if buf.len() < total_len {
+            return ParseResult::Incomplete;
+        }
+
+        let request = Self {
             method: method.into(),
             path: path.into(),
             version: version.into(),
@@ -158,7 +190,8 @@ impl Request {
             body: buf[header_end..header_end + body_len].to_vec(),
             // Attached later by the connection layer when sessions are enabled.
             session: None,
-        })
+        };
+        ParseResult::Complete(request, total_len)
     }
 
     /// Parses the path and query parameters from a full path string.
@@ -194,7 +227,7 @@ impl Request {
 
     /// Parses headers from the provided lines.
     #[inline(always)]
-    fn parse_headers(lines: &mut std::str::Split<'_, &str>) -> Vec<KeyValuePair> {
+    fn parse_headers(lines: &mut std::str::Split<'_, &str>) -> Option<Vec<KeyValuePair>> {
         let mut headers = Vec::with_capacity(12);
 
         for line in lines {
@@ -204,9 +237,34 @@ impl Request {
 
             let bytes = line.as_bytes();
 
-            let Some(colon) = memchr::memchr(b':', bytes) else {
-                continue;
-            };
+            let colon = memchr::memchr(b':', bytes)?;
+            if colon == 0
+                || !bytes[..colon].iter().all(|b| {
+                    b.is_ascii_alphanumeric()
+                        || matches!(
+                            *b,
+                            b'!' | b'#'
+                                | b'$'
+                                | b'%'
+                                | b'&'
+                                | b'\''
+                                | b'*'
+                                | b'+'
+                                | b'-'
+                                | b'.'
+                                | b'^'
+                                | b'_'
+                                | b'`'
+                                | b'|'
+                                | b'~'
+                        )
+                })
+                || bytes[colon + 1..]
+                    .iter()
+                    .any(|b| (*b < b' ' && *b != b'\t') || *b == 0x7f)
+            {
+                return None;
+            }
 
             let key = &line[..colon];
 
@@ -226,7 +284,7 @@ impl Request {
             headers.push((key.into(), line[start..end].into()));
         }
 
-        headers
+        Some(headers)
     }
 
     /// Gets a parameter by name.

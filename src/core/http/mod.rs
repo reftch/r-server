@@ -9,10 +9,10 @@ use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::core::metadata::Metadata;
 use crate::core::shutdown::Shutdown;
 use crate::core::{POLL_TIMEOUT, STATIC_DIRECTORY};
-use crate::request::{MAX_REQUEST_SIZE, Request};
 use crate::request::session::{
     SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie,
 };
+use crate::request::{MAX_REQUEST_SIZE, ParseResult, Request};
 use crate::response::{ContentType, Response, Status};
 use crate::router::Next;
 use crate::router::Router;
@@ -423,7 +423,10 @@ impl Server {
                 Ok(0) => {
                     // A read of 0 bytes signifies the remote peer closed the connection.
                     debug!("Connection closed by peer (EOF); state: Terminating");
-                    return Ok(false);
+                    if conn.read_buf.is_empty() {
+                        return Ok(false);
+                    }
+                    break;
                 }
                 Ok(n) => {
                     debug!("Read {} bytes from socket", n);
@@ -445,67 +448,69 @@ impl Server {
         }
 
         // Attempt to parse the request from the accumulated buffer.
-        if let Some(mut request) = Request::parse(&conn.read_buf) {
-            trace!(
-                "Request parsed successfully: {} {}",
-                request.method, request.path
-            );
+        match Request::parse_prefix(&conn.read_buf) {
+            ParseResult::Complete(mut request, consumed) => {
+                trace!(
+                    "Request parsed successfully: {} {}",
+                    request.method, request.path
+                );
 
-            let metadata: Arc<dyn Metadata> = Arc::new(conn.metadata.clone());
+                let metadata: Arc<dyn Metadata> = Arc::new(conn.metadata.clone());
 
-            // Pass cloned Arc<dyn Metadata> instead of borrowed reference &conn.metadata
-            let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
+                // Pass cloned Arc<dyn Metadata> instead of borrowed reference &conn.metadata
+                let mut response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
 
-            // Resolve the browser session (when enabled) before routing so
-            // handlers can read and mutate it; remember freshly minted ones
-            // so the cookie can be announced on the response below.
-            let mut attached_session = None;
-            if let Some(store) = &ctx.sessions {
-                let sid = request.header("cookie").and_then(sid_from_cookie);
-                let (session, is_new) = store.get_or_create(sid);
-                attached_session = Some((store.clone(), session.clone(), is_new));
-                request.session = Some(session);
-            }
+                // Resolve the browser session (when enabled) before routing so
+                // handlers can read and mutate it; remember freshly minted ones
+                // so the cookie can be announced on the response below.
+                let mut attached_session = None;
+                if let Some(store) = &ctx.sessions {
+                    let sid = request.header("cookie").and_then(sid_from_cookie);
+                    let (session, is_new) = store.get_or_create(sid);
+                    attached_session = Some((store.clone(), session.clone(), is_new));
+                    request.session = Some(session);
+                }
 
-            if let Some(handler_fn) = ctx.router.route(&mut request) {
-                // Execute route handler inside middleware chain
-                ctx.router.handle(&request, &mut response, handler_fn);
-            } else {
-                // Execute route for static resoueces
-                ctx.router.static_handle(
-                    &request,
-                    &mut response,
-                    Self::static_handler,
-                    &ctx.assets_path, // Pass the static directory path
+                if let Some(handler_fn) = ctx.router.route(&mut request) {
+                    // Execute route handler inside middleware chain
+                    ctx.router.handle(&request, &mut response, handler_fn);
+                } else {
+                    // Execute route for static resoueces
+                    ctx.router.static_handle(
+                        &request,
+                        &mut response,
+                        Self::static_handler,
+                        &ctx.assets_path, // Pass the static directory path
+                    );
+                }
+
+                // Announce or expire the session cookie after dispatch, since a
+                // handler may have created or destroyed the session mid-request.
+                if let Some((store, session, is_new)) = attached_session {
+                    if session.is_destroyed() {
+                        store.destroy(&session.id());
+                        response.header("Set-Cookie", cleared_session_cookie());
+                    } else if is_new {
+                        let sid = session.id();
+                        response.header("Set-Cookie", session_set_cookie(&sid, store.ttl()));
+                    }
+                }
+
+                // Preserve any bytes after this request for the next pipelined request.
+                conn.write_buf = response.build();
+                conn.read_buf.drain(..consumed);
+                trace!(
+                    "Response prepared; write_buf size: {} bytes",
+                    conn.write_buf.len()
                 );
             }
-
-            // Announce or expire the session cookie after dispatch, since a
-            // handler may have created or destroyed the session mid-request.
-            if let Some((store, session, is_new)) = attached_session {
-                if session.is_destroyed() {
-                    store.destroy(&session.id());
-                    response.header("Set-Cookie", cleared_session_cookie());
-                } else if is_new {
-                    let sid = session.id();
-                    response.header("Set-Cookie", session_set_cookie(&sid, store.ttl()));
-                }
+            ParseResult::Incomplete => {
+                trace!("Buffer contains partial request; waiting for more data...");
             }
-
-            // Prevent sending an empty body
-            if response.body.is_empty() {
-                return Ok(true);
+            ParseResult::Invalid => {
+                warn!("Rejecting malformed or unsupported HTTP request framing");
+                return Ok(false);
             }
-
-            // Prepare response for writing and clear buffer
-            conn.write_buf = response.build();
-            conn.read_buf.clear();
-            trace!(
-                "Response prepared; write_buf size: {} bytes",
-                conn.write_buf.len()
-            );
-        } else {
-            trace!("Buffer contains partial request; waiting for more data...");
         }
 
         Ok(true)
@@ -704,6 +709,17 @@ impl Server {
                                     indices_to_remove.push(i);
                                 } else {
                                     item.events = POLLIN;
+                                    if let Some(conn) = connections.get_mut(&fd)
+                                        && !conn.read_buf.is_empty()
+                                    {
+                                        match Self::handle_read(ctx, conn) {
+                                            Ok(true) if !conn.write_buf.is_empty() => {
+                                                item.events = POLLOUT;
+                                            }
+                                            Ok(true) => {}
+                                            Ok(false) | Err(_) => indices_to_remove.push(i),
+                                        }
+                                    }
                                 }
                             }
                             Ok(WriteState::Continue) => {

@@ -81,6 +81,17 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_response_is_serialized_with_zero_content_length() {
+        let metadata = metadata();
+        let response = Response::new(metadata, Status::Ok, b"", ContentType::TEXT);
+        let bytes = String::from_utf8(response.build()).unwrap();
+
+        assert!(bytes.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(bytes.contains("Content-Length: 0\r\n"));
+        assert!(bytes.ends_with("\r\n\r\n"));
+    }
+
+    #[test]
     fn test_content_type_as_str() {
         assert_eq!(ContentType::HTML.as_str(), "text/html");
         assert_eq!(ContentType::JSON.as_str(), "application/json");

@@ -3,6 +3,7 @@ use crate::request::{MAX_BODY_SIZE, Request};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::ParseResult;
 
     #[test]
     fn test_request_parse_valid() {
@@ -109,11 +110,8 @@ mod tests {
 
     #[test]
     fn test_request_parse_malformed_headers() {
-        // Header without colon should be skipped according to current implementation
         let buf = b"GET / HTTP/1.1\r\nInvalidHeaderLine\r\nX-Valid: value\r\n\r\n";
-        let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.headers.len(), 1);
-        assert_eq!(request.header("X-Valid"), Some("value"));
+        assert!(Request::parse(buf).is_none());
     }
 
     /// Deterministic pseudo-random bytes (xorshift64*), so tests exercise
@@ -223,11 +221,41 @@ mod tests {
     }
 
     #[test]
-    fn test_request_without_content_length_keeps_legacy_behavior() {
-        // No Content-Length header -> body is whatever follows the headers
+    fn test_request_without_content_length_has_no_body() {
+        // Without explicit framing, trailing bytes belong to the next request.
         let buf = b"POST / HTTP/1.1\r\nContent-Type: text/plain\r\n\r\nraw bytes";
         let request = Request::parse(buf).expect("Should parse valid request");
-        assert_eq!(request.body, b"raw bytes");
+        assert!(request.body.is_empty());
+    }
+
+    #[test]
+    fn test_request_prefix_preserves_pipelined_request() {
+        let first = b"GET /one HTTP/1.1\r\n\r\n";
+        let second = b"GET /two HTTP/1.1\r\n\r\n";
+        let mut bytes = first.to_vec();
+        bytes.extend_from_slice(second);
+
+        let ParseResult::Complete(request, consumed) = Request::parse_prefix(&bytes) else {
+            panic!("first pipelined request should parse");
+        };
+        assert_eq!(&*request.path, "/one");
+        assert_eq!(&bytes[consumed..], second);
+        assert!(matches!(
+            Request::parse_prefix(&bytes[consumed..]),
+            ParseResult::Complete(_, _)
+        ));
+    }
+
+    #[test]
+    fn test_request_rejects_ambiguous_or_unsupported_framing() {
+        for raw in [
+            &b"POST / HTTP/1.1\r\nContent-Length: nope\r\n\r\n"[..],
+            &b"POST / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 1\r\n\r\na"[..],
+            &b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"[..],
+            &b"POST / HTTP/1.1\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\na"[..],
+        ] {
+            assert!(matches!(Request::parse_prefix(raw), ParseResult::Invalid));
+        }
     }
 
     #[test]
