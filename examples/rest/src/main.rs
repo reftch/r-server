@@ -11,7 +11,8 @@ fn hello_handler(_req: &Request, res: &mut Response) {
 
 fn main() -> std::io::Result<()> {
     Server::new()?
-        .route(Method::GET, "/hello", hello_handler)
+        .bind("0.0.0.0", 3000)
+        .route(Method::GET, "/", hello_handler)
         .route(Method::GET, "/api/v1/users/:id", |req, res| {
             if let Some(id) = req.param("id") {
                 res.content_type(response::ContentType::JSON)

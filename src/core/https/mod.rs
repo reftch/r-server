@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::request::Request;
+use crate::request::{MAX_REQUEST_SIZE, Request};
 use crate::request::session::{
     SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie,
 };
@@ -580,6 +580,10 @@ impl Server {
 
                 Ok(n) => {
                     debug!("Read {} bytes from socket", n);
+                    if conn.read_buf.len().saturating_add(n) > MAX_REQUEST_SIZE {
+                        warn!("Request exceeded the maximum accepted size");
+                        return Ok(false);
+                    }
                     conn.read_buf.extend_from_slice(&buf[..n]);
                 }
 

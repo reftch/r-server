@@ -1,5 +1,0 @@
-[env]
-RUSTUP_TOOLCHAIN = "nightly"
-
-[tools]
-rust = "nightly"

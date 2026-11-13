@@ -259,6 +259,21 @@ mod tests {
     }
 
     #[test]
+    fn test_route_unsupported_method_does_not_panic() {
+        let mut router = Router::new();
+        let mut req = Request {
+            method: "TRACE",
+            path: "/path",
+            version: "1.1",
+            headers: Vec::new(),
+            params: Vec::new(),
+            query_params: Vec::new(),
+        };
+
+        assert!(router.route(&mut req).is_none());
+    }
+
+    #[test]
     fn test_nested_routes() {
         let mut router = Router::new();
 

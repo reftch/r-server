@@ -12,6 +12,11 @@ use crate::request::{
     session::Session,
 };
 
+/// Maximum header and body sizes accepted by the request parser.
+pub const MAX_HEADER_SIZE: usize = 64 * 1024;
+pub const MAX_BODY_SIZE: usize = 16 * 1024 * 1024;
+pub const MAX_REQUEST_SIZE: usize = MAX_HEADER_SIZE + MAX_BODY_SIZE;
+
 /// Represents an HTTP request without lifetime annotations.
 pub struct Request {
     /// The HTTP method (e.g., "GET", "POST").
@@ -82,9 +87,12 @@ impl Request {
     #[inline(always)]
     pub fn parse(buf: &[u8]) -> Option<Self> {
         let header_end = Self::find_header_end(buf)?;
+        if header_end > MAX_HEADER_SIZE {
+            return None;
+        }
 
-        // HTTP is ASCII. Avoid UTF-8 validation.
-        let text = unsafe { std::str::from_utf8_unchecked(&buf[..header_end]) };
+        // Validate untrusted network bytes before treating them as text.
+        let text = std::str::from_utf8(&buf[..header_end]).ok()?;
 
         let mut lines = text.split("\r\n");
 
@@ -125,13 +133,20 @@ impl Request {
         // before dispatching, otherwise large uploads (which span multiple
         // socket reads) would be handed to handlers with truncated bodies.
         let content_length = Self::content_length(&headers);
-        if let Some(len) = content_length
-            && buf.len() < header_end + len
-        {
-            return None;
+        if let Some(len) = content_length {
+            if len > MAX_BODY_SIZE {
+                return None;
+            }
+            let total_len = header_end.checked_add(len)?;
+            if buf.len() < total_len {
+                return None;
+            }
         }
 
         let body_len = content_length.unwrap_or(buf.len() - header_end);
+        if body_len > MAX_BODY_SIZE {
+            return None;
+        }
 
         Some(Self {
             method: method.into(),

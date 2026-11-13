@@ -9,7 +9,7 @@ use crate::core::connection::{ConnectionMetadata, ConnectionStreamClone};
 use crate::core::metadata::Metadata;
 use crate::core::shutdown::Shutdown;
 use crate::core::{POLL_TIMEOUT, STATIC_DIRECTORY};
-use crate::request::Request;
+use crate::request::{MAX_REQUEST_SIZE, Request};
 use crate::request::session::{
     SessionStore, cleared_session_cookie, session_set_cookie, sid_from_cookie,
 };
@@ -18,7 +18,7 @@ use crate::router::Next;
 use crate::router::Router;
 use crate::task;
 use crate::utils::get_file_info;
-use crate::{debug, error, info, trace};
+use crate::{debug, error, info, trace, warn};
 use std::io::{self, Read, Write};
 
 use std::sync::Arc;
@@ -427,6 +427,10 @@ impl Server {
                 }
                 Ok(n) => {
                     debug!("Read {} bytes from socket", n);
+                    if conn.read_buf.len().saturating_add(n) > MAX_REQUEST_SIZE {
+                        warn!("Request exceeded the maximum accepted size");
+                        return Ok(false);
+                    }
                     conn.read_buf.extend_from_slice(&buf[..n]);
                 }
                 Err(ref err) if Self::would_block(err) => {

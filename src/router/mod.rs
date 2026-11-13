@@ -141,7 +141,9 @@ impl Router {
             }
         }
 
-        let method: Method = request.method.parse().expect("Failed to parse method");
+        let Ok(method): Result<Method, _> = request.method.parse() else {
+            return None;
+        };
         current.handlers[method.index()]
     }
 

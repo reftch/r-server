@@ -1,4 +1,4 @@
-use crate::request::Request;
+use crate::request::{MAX_BODY_SIZE, Request};
 
 #[cfg(test)]
 mod tests {
@@ -29,6 +29,21 @@ mod tests {
         let buf = b"GET / HTTP/1.1\r\n";
         let request = Request::parse(buf);
         assert!(request.is_none());
+    }
+
+    #[test]
+    fn test_request_rejects_invalid_utf8_in_headers() {
+        let buf = b"GET / HTTP/1.1\r\nX-Bad: \xff\r\n\r\n";
+        assert!(Request::parse(buf).is_none());
+    }
+
+    #[test]
+    fn test_request_rejects_body_larger_than_limit() {
+        let raw = format!(
+            "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            MAX_BODY_SIZE + 1
+        );
+        assert!(Request::parse(raw.as_bytes()).is_none());
     }
 
     #[test]
